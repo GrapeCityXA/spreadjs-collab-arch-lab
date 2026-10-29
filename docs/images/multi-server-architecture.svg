@@ -1,0 +1,109 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 780" width="1200" height="780" font-family="'Segoe UI','Microsoft YaHei',sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5b6b7c"/>
+    </marker>
+    <marker id="ar-o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#e8590c"/>
+    </marker>
+    <style>
+      .bx  { fill:#f7f9fc; stroke:#c8d3e0; stroke-width:1.6; }
+      .bxn { fill:#eef4ff; stroke:#7aa2e3; stroke-width:1.8; }
+      .bxr { fill:#fff3f0; stroke:#e8837a; stroke-width:1.8; }
+      .bxd { fill:#f0fbf3; stroke:#77c295; stroke-width:1.8; }
+      .tb  { font-size:17px; font-weight:600; fill:#16232f; }
+      .t   { font-size:15px; fill:#33475b; }
+      .ts  { font-size:13px; fill:#67788a; }
+      .ttl { font-size:24px; font-weight:700; fill:#16232f; }
+      .sub { font-size:14px; fill:#67788a; }
+      .ln  { stroke:#8496a8; stroke-width:1.7; fill:none; marker-end:url(#ar); }
+      .lnb { stroke:#8496a8; stroke-width:1.7; fill:none; }
+      .lno { stroke:#e8590c; stroke-width:2.6; fill:none; marker-end:url(#ar-o); marker-start:url(#ar-o); }
+      .badge { fill:#e8590c; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="780" fill="#ffffff"/>
+  <text class="ttl" x="40" y="52">SpreadJS 协同 · 多服务器部署架构</text>
+  <text class="sub" x="40" y="78">同一个 roomId + Redis 适配器 + 共享文档存储 = 跨节点协同成立</text>
+
+  <!-- clients -->
+  <rect class="bx"  x="75"  y="108" width="250" height="76" rx="10"/>
+  <text class="tb"  x="200" y="140" text-anchor="middle">alice</text>
+  <text class="ts"  x="200" y="163" text-anchor="middle">浏览器 / Designer</text>
+
+  <rect class="bx"  x="475" y="108" width="250" height="76" rx="10"/>
+  <text class="tb"  x="600" y="140" text-anchor="middle">bob</text>
+  <text class="ts"  x="600" y="163" text-anchor="middle">浏览器 / Designer</text>
+
+  <rect class="bx"  x="875" y="108" width="250" height="76" rx="10"/>
+  <text class="tb"  x="1000" y="140" text-anchor="middle">carol</text>
+  <text class="ts"  x="1000" y="163" text-anchor="middle">浏览器 / Designer</text>
+
+  <!-- client -> nginx bus -->
+  <path class="lnb" d="M200,184 L200,212"/>
+  <path class="lnb" d="M600,184 L600,212"/>
+  <path class="lnb" d="M1000,184 L1000,212"/>
+  <path class="lnb" d="M200,212 L1000,212"/>
+  <path class="ln"  d="M600,212 L600,240"/>
+  <text class="ts"  x="614" y="205">WebSocket（socket.io）</text>
+
+  <!-- nginx -->
+  <rect class="bxr" x="455" y="240" width="290" height="86" rx="10"/>
+  <text class="tb"  x="600" y="274" text-anchor="middle">nginx :3000</text>
+  <text class="ts"  x="600" y="298" text-anchor="middle">负载均衡（upstream → 各节点）</text>
+  <text class="ts"  x="600" y="316" text-anchor="middle">只负责选节点，不做会话迁移</text>
+
+  <!-- nginx -> nodes bus -->
+  <path class="lnb" d="M600,326 L600,352"/>
+  <path class="lnb" d="M200,352 L1000,352"/>
+  <path class="ln"  d="M200,352 L200,382"/>
+  <path class="ln"  d="M600,352 L600,382"/>
+  <path class="ln"  d="M1000,352 L1000,382"/>
+
+  <!-- nodes -->
+  <rect class="bxn" x="75"  y="382" width="250" height="118" rx="10"/>
+  <text class="tb"  x="200" y="414" text-anchor="middle">node-8081</text>
+  <text class="t"   x="200" y="440" text-anchor="middle">js-collaboration Server</text>
+  <text class="ts"  x="200" y="462" text-anchor="middle">+ socketIoAdapter</text>
+  <text class="ts"  x="200" y="482" text-anchor="middle">+ OT / presence</text>
+
+  <rect class="bxn" x="475" y="382" width="250" height="118" rx="10"/>
+  <text class="tb"  x="600" y="414" text-anchor="middle">node-8082</text>
+  <text class="t"   x="600" y="440" text-anchor="middle">js-collaboration Server</text>
+  <text class="ts"  x="600" y="462" text-anchor="middle">+ socketIoAdapter</text>
+  <text class="ts"  x="600" y="482" text-anchor="middle">+ OT / presence</text>
+
+  <rect class="bxn" x="875" y="382" width="250" height="118" rx="10"/>
+  <text class="tb"  x="1000" y="414" text-anchor="middle">node-8083</text>
+  <text class="t"   x="1000" y="440" text-anchor="middle">js-collaboration Server</text>
+  <text class="ts"  x="1000" y="462" text-anchor="middle">+ socketIoAdapter</text>
+  <text class="ts"  x="1000" y="482" text-anchor="middle">+ OT / presence</text>
+
+  <!-- nodes -> shared bus -->
+  <path class="lnb" d="M200,500 L200,536"/>
+  <path class="lnb" d="M600,500 L600,536"/>
+  <path class="lnb" d="M1000,500 L1000,536"/>
+  <path class="lnb" d="M200,536 L1000,536"/>
+  <path class="lnb" d="M345,536 L345,582"/>
+  <path class="lnb" d="M855,536 L855,582"/>
+  <path class="lno" d="M345,536 L855,536"/>
+
+  <!-- redis -->
+  <rect class="bxr" x="180" y="582" width="330" height="118" rx="10"/>
+  <text class="tb"  x="345" y="618" text-anchor="middle">Redis Pub/Sub</text>
+  <text class="t"   x="345" y="644" text-anchor="middle">唯一的跨节点实时通道</text>
+  <text class="ts"  x="345" y="668" text-anchor="middle">channel: socket.io#/&lt;ns&gt;#&lt;room&gt;#</text>
+  <text class="ts"  x="345" y="686" text-anchor="middle">实时消息 / presence 广播</text>
+
+  <!-- db -->
+  <rect class="bxd" x="690" y="582" width="330" height="118" rx="10"/>
+  <text class="tb"  x="855" y="618" text-anchor="middle">共享文档存储</text>
+  <text class="t"   x="855" y="644" text-anchor="middle">IDatabaseAdapter（如 SqliteDb）</text>
+  <text class="ts"  x="855" y="668" text-anchor="middle">OT 文档与操作日志落盘</text>
+  <text class="ts"  x="855" y="686" text-anchor="middle">新加入者 / 重连者由此补齐状态</text>
+
+  <!-- callout -->
+  <rect class="bx" x="75" y="726" width="945" height="38" rx="8" fill="#fffaf0" stroke="#e8c47a"/>
+  <text class="t"  x="93" y="751">缺少 Redis 适配器时：消息不报错、不重试，直接静默丢失——实测接收端 0 条、Redis 上 0 条流量。</text>
+</svg>

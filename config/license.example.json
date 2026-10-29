@@ -1,0 +1,21 @@
+{
+  "_comment": [
+    "Copy this file to config/license.json and fill in the keys you own.",
+    "NEVER commit config/license.json - it is gitignored.",
+    "",
+    "Three different keys belong to three different components:",
+    "  runtime.licenseKey      -> SpreadJS core, validated in the BROWSER. Free on localhost/127.0.0.1.",
+    "  designer.licenseKey     -> SpreadJS Designer, validated in the BROWSER. Only needed for Designer pages.",
+    "  server.serverLicenseKey -> js-collaboration SERVER, validated on the server, bound to this machine's id.",
+    "",
+    "The mirror (zero-license) implementation needs none of them.",
+    "The official implementation (impl=real) needs server.serverLicenseKey; it is machine-bound,",
+    "so run `npm run doctor` to print your machine id before requesting one from GrapeCity.",
+    "",
+    "Environment variables override this file:",
+    "  SJS_LICENSE_KEY, SJS_DESIGNER_LICENSE_KEY, SJS_SERVER_LICENSE_KEY"
+  ],
+  "runtime": { "licenseKey": "" },
+  "designer": { "licenseKey": "" },
+  "server": { "serverLicenseKey": "" }
+}

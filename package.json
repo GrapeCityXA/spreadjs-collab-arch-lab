@@ -1,0 +1,73 @@
+{
+  "name": "spreadjs-collab-arch-lab",
+  "version": "1.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Run-yourself architecture lab for SpreadJS real-time collaboration: single server vs sharded multi-server vs shared-room multi-server. Measures what each topology actually delivers on your machine.",
+  "keywords": [
+    "spreadjs",
+    "collaboration",
+    "architecture",
+    "load-balancing",
+    "socket.io",
+    "redis",
+    "ot",
+    "benchmark"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GrapeCityXA/spreadjs-collab-arch-lab.git"
+  },
+  "bugs": {
+    "url": "https://github.com/GrapeCityXA/spreadjs-collab-arch-lab/issues"
+  },
+  "homepage": "https://github.com/GrapeCityXA/spreadjs-collab-arch-lab#readme",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "lab": "node src/cli.mjs",
+    "up": "node src/cli.mjs up",
+    "down": "node src/cli.mjs down",
+    "status": "node src/cli.mjs status",
+    "web": "node src/cli.mjs web",
+    "check": "node src/cli.mjs check",
+    "compare": "node src/cli.mjs compare",
+    "bench": "node src/cli.mjs bench",
+    "doctor": "node src/cli.mjs doctor",
+    "docs:check": "node scripts/check-docs.mjs",
+    "agent": "node src/remote/agent.mjs",
+    "capacity": "node scripts/capacity.mjs",
+    "big-doc": "node scripts/big-doc.mjs",
+    "build:official": "webpack --config webpack.official.config.cjs",
+    "self-test": "node tests/self-test.mjs",
+    "test:api": "node tests/public-api.mjs",
+    "test:inputs": "node tests/input-contract.mjs",
+    "test:distributed": "node tests/distributed-smoke.mjs",
+    "test:ui": "node tests/browser-mirror-sync.mjs",
+    "test:official": "node tests/official-ot-sync.mjs"
+  },
+  "dependencies": {
+    "@grapecity-software/js-collaboration": "^19.2.1",
+    "@grapecity-software/js-collaboration-client": "^19.2.1",
+    "@grapecity-software/js-collaboration-ot": "^19.2.1",
+    "@grapecity-software/js-collaboration-ot-client": "^19.2.1",
+    "@grapecity-software/js-collaboration-ot-sqlite": "^19.2.1",
+    "@grapecity-software/js-collaboration-presence": "^19.2.1",
+    "@grapecity-software/spread-sheets": "^19.2.1",
+    "@grapecity-software/spread-sheets-collaboration-addon": "^19.2.1",
+    "@grapecity-software/spread-sheets-collaboration-client": "^19.2.1",
+    "@socket.io/redis-adapter": "^8.3.0",
+    "redis": "^6.3.0",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.4",
+    "sqlite3": "^6.0.1"
+  },
+  "devDependencies": {
+    "css-loader": "^6.11.0",
+    "style-loader": "^4.0.0",
+    "webpack": "^5.111.1",
+    "webpack-cli": "^5.1.4"
+  }
+}

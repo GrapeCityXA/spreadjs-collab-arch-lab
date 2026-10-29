@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>官方授权客户端 · SpreadJS 协同架构实验室</title>
+<!--
+  OPTIONAL licensed page.
+
+  This file is plain HTML (committed). The JavaScript that actually talks to the
+  official collaboration server is `public/official-src/main.js`, bundled by
+  `npm run build:official` into `/official/bundle.js`. When that bundle is missing the
+  page must NOT be blank: the inline script below explains how to build it.
+-->
+<style>
+  :root {
+    --bg: #eef1f6; --card: #fff; --ink: #111827; --muted: #6b7280; --muted-2: #9ca3af;
+    --line: #e5e7eb; --accent: #7c3aed; --accent-soft: #f5f3ff;
+    --ok: #15803d; --ok-soft: #ecfdf3; --warn: #b45309; --warn-soft: #fffbeb;
+    --err: #b91c1c; --err-soft: #fef2f2; --radius: 12px;
+    color-scheme: light;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; display: flex; flex-direction: column; overflow: hidden;
+    background: var(--bg); color: var(--ink);
+    font: 13px/1.5 "Segoe UI", "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  }
+  .topbar {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 14px;
+    padding: 10px 18px; background: var(--card); border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: center; gap: 10px; margin-right: auto; }
+  .brand-mark {
+    width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center;
+    background: linear-gradient(135deg, #7c3aed, #2563eb); color: #fff; font-size: 16px; font-weight: 700;
+  }
+  .brand-name { font-size: 14px; font-weight: 650; }
+  .brand-sub { font-size: 11px; color: var(--muted); }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
+    border: 1px solid var(--line); border-radius: 999px; background: #f9fafb;
+    color: var(--muted); font-size: 12px; white-space: nowrap;
+  }
+  .chip b { color: var(--ink); font-weight: 600; }
+  .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; border: 1px solid transparent; }
+  .badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .badge.ok { color: var(--ok); background: var(--ok-soft); border-color: #bbf7d0; }
+  .badge.warn { color: var(--warn); background: var(--warn-soft); border-color: #fde68a; }
+  .badge.error, .badge.err { color: var(--err); background: var(--err-soft); border-color: #fecaca; }
+  .layout { flex: 1 1 auto; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 330px; }
+  .sheet-pane { min-height: 0; display: flex; flex-direction: column; padding: 12px 0 12px 12px; }
+  .ribbon {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+    padding: 8px 12px; background: var(--accent-soft); border: 1px solid #ddd6fe;
+    border-bottom: 0; border-radius: var(--radius) var(--radius) 0 0;
+    color: #5b21b6; font-size: 12px;
+  }
+  .ribbon a { color: #6d28d9; }
+  #ss { flex: 1 1 auto; min-height: 0; background: #fff; border: 1px solid var(--line); border-radius: 0 0 var(--radius) var(--radius); overflow: hidden; }
+  .side { min-height: 0; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
+  .card-title { font-size: 11px; font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: 9px; }
+  .kv { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; margin-top: 5px; }
+  .kv span { color: var(--muted-2); }
+  .kv b { font-family: ui-monospace, Consolas, monospace; font-size: 11.5px; font-weight: 600; word-break: break-all; text-align: right; }
+  .log { display: flex; flex-direction: column; gap: 2px; max-height: 300px; overflow: auto; font-size: 11.5px; }
+  .line { padding: 3px 4px; border-radius: 4px; word-break: break-word; }
+  .line + .line { border-top: 1px solid #f3f4f6; }
+  .line.warn { color: var(--warn); }
+  .line.error { color: var(--err); }
+  .line.ok { color: var(--ok); }
+  .hint { color: var(--muted); font-size: 11.5px; line-height: 1.6; }
+  .hint b { color: var(--ink); }
+  .boot {
+    position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+    background: rgba(238, 241, 246, .85); backdrop-filter: blur(2px);
+  }
+  .boot.hidden { display: none; }
+  .boot.error { background: rgba(238, 241, 246, .97); }
+  .boot-box {
+    background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+    box-shadow: 0 24px 60px -30px rgba(17, 24, 39, .5);
+    padding: 18px 22px; max-width: 620px; text-align: center;
+  }
+  .boot-box h3 { margin: 0 0 6px; font-size: 15px; }
+  .boot-box p { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+  .boot-box code { background: #f3f4f6; padding: 1px 6px; border-radius: 4px; font-size: 11.5px; }
+  .boot-box pre {
+    margin: 12px 0 0; padding: 10px 12px; background: #0f172a; color: #e2e8f0;
+    border-radius: 8px; font-family: ui-monospace, Consolas, monospace; font-size: 12px; text-align: left;
+  }
+  .bundle-hint { display: none; }
+  .spinner {
+    width: 22px; height: 22px; margin: 0 auto 10px; border-radius: 50%;
+    border: 2.5px solid #ede9fe; border-top-color: var(--accent); animation: spin .8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (max-width: 980px) { .layout { grid-template-columns: minmax(0, 1fr); } .side { display: none; } }
+</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <div class="brand-mark">▦</div>
+    <div>
+      <div class="brand-name">SpreadJS 协同架构实验室 · 官方授权页</div>
+      <div class="brand-sub">官方 js-collaboration Client + OT SharedDoc（需要授权）</div>
+    </div>
+  </div>
+  <div class="chips" style="display:flex;gap:8px;flex-wrap:wrap">
+    <span class="chip">房间 <b id="room">—</b></span>
+    <span class="chip">我 <b id="label">—</b></span>
+    <span class="chip">节点 <b id="node">—</b></span>
+    <span class="chip">文档 <b id="version">0</b></span>
+    <span id="state" class="badge warn">初始化…</span>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="sheet-pane">
+    <div class="ribbon">
+      <b>官方授权版</b>
+      <span>这条链路走 GrapeCity 官方协同服务（OT / presence）。零授权的 mirror 客户端在 <a href="/client/?room=arch-lab-demo&label=独立客户端&seed=1">/client/</a>。</span>
+    </div>
+    <div id="ss" aria-label="官方协同工作簿"></div>
+  </section>
+  <aside class="side">
+    <section class="card">
+      <div class="card-title">运行日志</div>
+      <div id="log" class="log"></div>
+    </section>
+    <section class="card">
+      <div class="card-title">说明</div>
+      <div class="hint">
+        <b>构建：</b>本页面的 JS 由 <code>public/official-src/main.js</code> 打包而来：<br>
+        <code>npm run build:official</code><br><br>
+        <b>前提：</b>官方服务端需要 <code>config/license.json</code> 里的
+        <code>serverLicenseKey</code>；浏览器侧 runtime key 会由
+        <code>GET /api/collab-config</code> 注入。<br><br>
+        <b>没有授权时：</b>官方服务会拒绝所有握手；请改用零授权的 mirror 客户端或先配置授权。
+      </div>
+    </section>
+  </aside>
+</main>
+
+<!-- Bundle-missing fallback: the page explains itself instead of going blank. -->
+<div id="boot" class="boot">
+  <div class="boot-box" id="bootBox">
+    <div class="spinner" id="bootSpinner"></div>
+    <h3 id="bootTitle">正在加载官方协同客户端…</h3>
+    <p id="bootText">加载 /official/bundle.js 并连接协同服务。</p>
+    <div class="bundle-hint" id="bundleHint">
+      <p style="margin-top:12px">
+        这个页面需要一个 webpack 产物 <code>/official/bundle.js</code>，但当前没有加载到它。<br>
+        请在项目根目录执行：
+      </p>
+      <pre>npm run build:official</pre>
+      <p style="margin-top:10px">
+        然后刷新本页面。构建配置见 <code>webpack.official.config.cjs</code>；产物已在
+        <code>.gitignore</code> 中忽略。<br>
+        如果不需要官方授权链路，直接使用零授权的
+        <a href="/client/?room=arch-lab-demo&label=独立客户端&seed=1">mirror 客户端</a> 即可。
+      </p>
+    </div>
+  </div>
+</div>
+
+<script>
+  window.__labOfficialBundleError = false;
+  window.__labOfficialBooted = false;
+</script>
+<script src="/official/bundle.js" onerror="window.__labOfficialBundleError = true"></script>
+<script>
+  (function () {
+    function showMissingBundle() {
+      if (window.__labOfficialBooted) return;
+      var boot = document.getElementById('boot');
+      var hint = document.getElementById('bundleHint');
+      var spinner = document.getElementById('bootSpinner');
+      var title = document.getElementById('bootTitle');
+      var text = document.getElementById('bootText');
+      if (!boot || !hint) return;
+      boot.className = 'boot error';
+      if (spinner) spinner.style.display = 'none';
+      if (title) title.textContent = '官方客户端 bundle 尚未构建';
+      if (text) text.textContent = '缺少 /official/bundle.js：这是可选页面，需要先构建一次。';
+      hint.style.display = 'block';
+      var stateEl = document.getElementById('state');
+      if (stateEl) { stateEl.textContent = 'bundle 未构建'; stateEl.className = 'badge err'; }
+    }
+    // The bundle marks __labOfficialBooted synchronously when it executes. If we get to
+    // window load + a short grace period without that flag (404, webpack error, or a
+    // hard crash before the flag is set), show the build instructions instead of a blank page.
+    window.addEventListener('load', function () {
+      if (window.__labOfficialBooted) { var boot = document.getElementById('boot'); if (boot) boot.className = 'boot hidden'; return; }
+      setTimeout(showMissingBundle, 300);
+    });
+    setTimeout(showMissingBundle, 6000);
+  })();
+</script>
+</body>
+</html>

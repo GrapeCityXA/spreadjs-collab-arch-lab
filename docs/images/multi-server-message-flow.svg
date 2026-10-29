@@ -1,0 +1,128 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 730" width="1200" height="730" font-family="'Segoe UI','Microsoft YaHei',sans-serif">
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7d8fa3"/>
+    </marker>
+    <marker id="a2g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#4fae74"/>
+    </marker>
+    <style>
+      .bx  { fill:#f7f9fc; stroke:#c8d3e0; stroke-width:1.6; }
+      .bxn { fill:#eef4ff; stroke:#7aa2e3; stroke-width:1.8; }
+      .bxr { fill:#fff3f0; stroke:#e8837a; stroke-width:1.8; }
+      .bxd { fill:#f0fbf3; stroke:#77c295; stroke-width:1.8; }
+      .tb  { font-size:16px; font-weight:600; fill:#16232f; }
+      .t   { font-size:14px; fill:#33475b; }
+      .ts  { font-size:12.5px; fill:#67788a; }
+      .ttl { font-size:24px; font-weight:700; fill:#16232f; }
+      .sub { font-size:14px; fill:#67788a; }
+      .hd  { font-size:16px; font-weight:600; fill:#33475b; }
+      .ln  { stroke:#7d8fa3; stroke-width:2; fill:none; marker-end:url(#a2); }
+      .lng { stroke:#4fae74; stroke-width:2; fill:none; marker-end:url(#a2g); }
+      .num { fill:#e8590c; }
+      .numt{ font-size:13px; font-weight:700; fill:#ffffff; }
+    </style>
+  </defs>
+
+  <rect width="1200" height="730" fill="#ffffff"/>
+  <text class="ttl" x="40" y="52">一次跨节点编辑要走的路径</text>
+  <text class="sub" x="40" y="78">协同消息分成实时广播与文档落盘两条路，多服务器部署要同时解决这两条</text>
+
+  <!-- ============ row 1: realtime ============ -->
+  <text class="hd" x="40" y="116">① 实时广播路径 —— 让另一端「马上」看到</text>
+
+  <rect class="bx" x="25" y="134" width="170" height="112" rx="10"/>
+  <text class="tb" x="110" y="176" text-anchor="middle">alice</text>
+  <text class="ts" x="110" y="200" text-anchor="middle">移动选区 / 编辑</text>
+
+  <rect class="bxn" x="265" y="134" width="170" height="112" rx="10"/>
+  <text class="tb" x="350" y="170" text-anchor="middle">node-8081</text>
+  <text class="ts" x="350" y="194" text-anchor="middle">本地扇出给本节点</text>
+  <text class="ts" x="350" y="214" text-anchor="middle">并写入 Redis channel</text>
+
+  <rect class="bxr" x="505" y="134" width="170" height="112" rx="10"/>
+  <text class="tb" x="590" y="170" text-anchor="middle">Redis Pub/Sub</text>
+  <text class="ts" x="590" y="194" text-anchor="middle">广播给所有</text>
+  <text class="ts" x="590" y="214" text-anchor="middle">订阅该 channel 的节点</text>
+
+  <rect class="bxn" x="745" y="134" width="170" height="112" rx="10"/>
+  <text class="tb" x="830" y="170" text-anchor="middle">node-8082</text>
+  <text class="ts" x="830" y="194" text-anchor="middle">收到远端帧</text>
+  <text class="ts" x="830" y="214" text-anchor="middle">直接投递给目标 socket</text>
+
+  <rect class="bx" x="985" y="134" width="170" height="112" rx="10"/>
+  <text class="tb" x="1070" y="176" text-anchor="middle">bob</text>
+  <text class="ts" x="1070" y="200" text-anchor="middle">看到 alice 的选区</text>
+
+  <path class="ln" d="M195,190 L259,190"/>
+  <path class="ln" d="M435,190 L499,190"/>
+  <path class="ln" d="M675,190 L739,190"/>
+  <path class="ln" d="M915,190 L979,190"/>
+  <circle class="num" cx="227" cy="190" r="13"/><text class="numt" x="227" y="195" text-anchor="middle">1</text>
+  <circle class="num" cx="467" cy="190" r="13"/><text class="numt" x="467" y="195" text-anchor="middle">2</text>
+  <circle class="num" cx="707" cy="190" r="13"/><text class="numt" x="707" y="195" text-anchor="middle">3</text>
+  <circle class="num" cx="947" cy="190" r="13"/><text class="numt" x="947" y="195" text-anchor="middle">4</text>
+
+  <!-- ============ row 2: persistence ============ -->
+  <text class="hd" x="40" y="305">② 文档落盘路径 —— 让后来者和重连者「补上」状态</text>
+
+  <rect class="bx" x="25" y="323" width="170" height="112" rx="10"/>
+  <text class="tb" x="110" y="365" text-anchor="middle">alice 编辑</text>
+  <text class="ts" x="110" y="389" text-anchor="middle">修改单元格内容</text>
+
+  <rect class="bxn" x="265" y="323" width="170" height="112" rx="10"/>
+  <text class="tb" x="350" y="359" text-anchor="middle">OT 服务端</text>
+  <text class="ts" x="350" y="383" text-anchor="middle">版本号比对</text>
+  <text class="ts" x="350" y="403" text-anchor="middle">操作序列化</text>
+
+  <rect class="bxd" x="505" y="323" width="170" height="112" rx="10"/>
+  <text class="tb" x="590" y="359" text-anchor="middle">共享文档存储</text>
+  <text class="ts" x="590" y="383" text-anchor="middle">IDatabaseAdapter</text>
+  <text class="ts" x="590" y="403" text-anchor="middle">文档与操作日志</text>
+
+  <rect class="bxn" x="745" y="323" width="170" height="112" rx="10"/>
+  <text class="tb" x="830" y="359" text-anchor="middle">node-8082</text>
+  <text class="ts" x="830" y="383" text-anchor="middle">读同一份文档</text>
+  <text class="ts" x="830" y="403" text-anchor="middle">OT 渲染</text>
+
+  <rect class="bx" x="985" y="323" width="170" height="112" rx="10"/>
+  <text class="tb" x="1070" y="365" text-anchor="middle">bob</text>
+  <text class="ts" x="1070" y="389" text-anchor="middle">看到最终内容</text>
+
+  <path class="lng" d="M195,379 L259,379"/>
+  <path class="lng" d="M435,379 L499,379"/>
+  <path class="lng" d="M675,379 L739,379"/>
+  <path class="lng" d="M915,379 L979,379"/>
+
+  <!-- ============ contrast ============ -->
+  <rect x="25" y="486" width="1130" height="220" rx="12" fill="#fffaf0" stroke="#e8c47a" stroke-width="1.8"/>
+  <text class="hd" x="55" y="524" fill="#a8620a">反面对照：不注入 Redis 适配器时</text>
+
+  <rect class="bx" x="55" y="546" width="170" height="90" rx="10" opacity="0.55"/>
+  <text class="tb" x="140" y="584" text-anchor="middle" fill="#8b9aa8">alice</text>
+  <text class="ts" x="140" y="606" text-anchor="middle">照常发送</text>
+
+  <rect class="bxn" x="295" y="546" width="170" height="90" rx="10" opacity="0.55"/>
+  <text class="tb" x="380" y="584" text-anchor="middle" fill="#8b9aa8">node-8081</text>
+  <text class="ts" x="380" y="606" text-anchor="middle">只扇出本节点内的客户端</text>
+
+  <rect class="bxr" x="535" y="546" width="170" height="90" rx="10" opacity="0.3"/>
+  <text class="tb" x="620" y="584" text-anchor="middle" fill="#b9b0ac">Redis 无流量</text>
+  <text class="ts" x="620" y="606" text-anchor="middle">0 条</text>
+
+  <rect class="bxn" x="775" y="546" width="170" height="90" rx="10" opacity="0.3"/>
+  <text class="tb" x="860" y="584" text-anchor="middle" fill="#b9b0ac">node-8082</text>
+  <text class="ts" x="860" y="606" text-anchor="middle">什么都没收到</text>
+
+  <rect class="bx" x="1015" y="546" width="110" height="90" rx="10" opacity="0.55"/>
+  <text class="tb" x="1070" y="584" text-anchor="middle" fill="#8b9aa8">bob</text>
+  <text class="ts" x="1070" y="606" text-anchor="middle">毫无变化</text>
+
+  <path d="M468,591 L532,591" stroke="#c8d3e0" stroke-width="2" stroke-dasharray="6 5" fill="none"/>
+  <path d="M708,591 L772,591" stroke="#c8d3e0" stroke-width="2" stroke-dasharray="6 5" fill="none"/>
+  <text class="t" x="500" y="576" text-anchor="middle" fill="#c0392b" font-size="20">✕</text>
+  <text class="t" x="740" y="576" text-anchor="middle" fill="#c0392b" font-size="20">✕</text>
+
+  <text class="t" x="55" y="670" fill="#8a4b08">实测：接收端收到 0 条、接收端节点计数 0 → 0、Redis 上 0 条流量。</text>
+  <text class="t" x="55" y="694" fill="#8a4b08">没有任何报错或重试——消息是静默丢失的，这是多服务器部署最容易踩的坑。</text>
+</svg>

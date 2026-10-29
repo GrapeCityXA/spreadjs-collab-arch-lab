@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SpreadJS 协同架构实验室 · 多服务器部署实验台</title>
+<!--
+  The lab console. Vanilla JS + hand-written CSS, no build step, no framework.
+  Everything rendered below comes from the web API (DEV-CONTRACT §7):
+    GET  /api/catalogue      mode cards, comparison matrix, environment capability
+    GET  /api/stack          live topology (LB, nodes, Redis, store, clients, doc versions)
+    POST /api/stack/up|down  start / stop a topology
+    POST /api/check          run the architecture check, then poll /api/check/:jobId
+    GET  /api/report/latest  newest report ({json, markdown})
+-->
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="#top">
+      <span class="brand-mark">▦</span>
+      <span class="brand-copy">
+        <span class="brand-name">SpreadJS 协同架构实验室</span>
+        <span class="brand-sub">多服务器部署实验台</span>
+      </span>
+    </a>
+    <nav class="nav">
+      <a href="#modes">选择架构</a>
+      <a href="#stack">技术栈</a>
+      <a href="#clients">协作客户端</a>
+      <a href="#check">架构体检</a>
+      <a href="#compare">模式对比</a>
+    </nav>
+    <div class="topbar-actions">
+      <span id="apiBadge" class="badge gray">API 连接中…</span>
+      <button id="reportBtn" class="btn ghost small" type="button">最新报告</button>
+    </div>
+  </div>
+</header>
+
+<main id="top" class="page">
+  <section class="hero">
+    <div class="hero-copy">
+      <div class="eyebrow">Real-time collaboration · architecture lab</div>
+      <h1>选一种协同架构，亲手看看它到底交付了什么。</h1>
+      <p>
+        启动单机 / 分区多机 / 共享 room 多机三种拓扑，打开真实 SpreadJS 协作客户端，
+        再跑一次「架构体检」：哪些承诺成立、哪些静默失败、哪些只是「最终一致」的假象，
+        都用同一套可复现的检查说清楚。
+      </p>
+      <div class="hero-actions">
+        <button id="heroStartBtn" class="btn primary" type="button">启动单机架构</button>
+        <a class="btn ghost" href="#check">直接运行架构体检</a>
+        <a class="btn ghost" id="latestReportLink" href="/api/report/latest" target="_blank" rel="noreferrer">查看最新报告</a>
+      </div>
+    </div>
+    <div class="hero-aside">
+      <div class="hero-card">
+        <div class="hero-card-title">当前技术栈</div>
+        <div id="heroStack" class="hero-stack">
+          <div class="skeleton-line"></div>
+          <div class="skeleton-line short"></div>
+          <div class="skeleton-line"></div>
+        </div>
+      </div>
+      <div class="hero-hint">Windows 本机演示：默认 mirror 实现不需要填写商业授权码；命令行检查不需要 Chrome / Edge。</div>
+    </div>
+  </section>
+
+  <section id="modes" class="section">
+    <div class="section-head">
+      <div>
+        <h2><span class="step">1</span>选择架构</h2>
+        <p class="section-sub">每种模式都写明了它承诺什么、什么时候不该用、以及最容易踩的坑。点卡片上的按钮即可启动。</p>
+      </div>
+      <div class="section-meta" id="modesMeta"></div>
+    </div>
+    <div id="modeCards" class="mode-grid">
+      <div class="card placeholder-card"><div class="skeleton-line"></div><div class="skeleton-line short"></div></div>
+      <div class="card placeholder-card"><div class="skeleton-line"></div><div class="skeleton-line short"></div></div>
+      <div class="card placeholder-card"><div class="skeleton-line"></div><div class="skeleton-line short"></div></div>
+    </div>
+    <details class="variants" id="variantsBox">
+      <summary>反模式实验室：把真实事故复现给你看 <span class="muted">（3 个变体，可一键启动）</span></summary>
+      <div id="variantList" class="variant-list"></div>
+    </details>
+  </section>
+
+  <section id="stack" class="section">
+    <div class="section-head">
+      <div>
+        <h2><span class="step">2</span>当前技术栈</h2>
+        <p class="section-sub">来自编排器状态 + 每个节点 <code>/health</code> 的实时聚合。节点卡片的「客户端 / 文档版本」每 2.5 秒刷新。</p>
+      </div>
+      <div class="section-actions">
+        <button id="refreshStackBtn" class="btn ghost small" type="button">立即刷新</button>
+        <button id="stopStackBtn" class="btn danger small" type="button">停止技术栈</button>
+      </div>
+    </div>
+    <div id="stackStatus" class="stack-status"></div>
+
+    <div class="card scenario-panel" id="scenarioPanel">
+      <div class="scenario-head">
+        <div>
+          <div class="scenario-title">实验场景</div>
+          <p class="scenario-sub">三个模式共用这组输入。mirror 验证消息转发、房间隔离与文档共享，不能证明官方 OT 行为或 SpreadJS 容量。压测完成后，还需按你的延迟和失败率要求判断结果。</p>
+        </div>
+        <div class="scenario-actions">
+          <a href="#scenarioPanel" id="scenarioReset" class="link-btn">恢复默认</a>
+          <label class="check-inline" title="跨机分摊：把负载按 remote agent 拆分（仅负载均衡拓扑有意义）">
+            <input id="benchDistribute" type="checkbox"> 跨机分摊
+          </label>
+          <button id="benchRunBtn" class="btn primary small" type="button">压测（按场景）</button>
+        </div>
+      </div>
+      <div class="scenario-inputs">
+        <label class="scenario-field">
+          <span>并发用户数</span>
+          <input id="scenarioUsers" type="number" inputmode="numeric" min="1" step="1" value="20">
+          <em id="scenarioUsersHint" class="field-hint"></em>
+        </label>
+        <label class="scenario-field">
+          <span>每 N 秒一次编辑</span>
+          <input id="scenarioInterval" type="number" inputmode="decimal" min="0.05" step="0.1" value="2">
+          <em id="scenarioIntervalHint" class="field-hint"></em>
+        </label>
+        <label class="scenario-field">
+          <span>负载时长（秒）</span>
+          <input id="scenarioDuration" type="number" min="1" step="1" value="8">
+          <em id="scenarioDurationHint" class="field-hint"></em>
+        </label>
+        <label class="scenario-field">
+          <span>房间数</span>
+          <input id="scenarioRooms" type="number" min="1" step="1" value="1">
+          <em id="scenarioRoomsHint" class="field-hint"></em>
+        </label>
+      </div>
+      <div class="scenario-derived" id="scenarioDerived">正在从 /api/catalogue 读取场景默认值…</div>
+      <div class="scenario-note" id="scenarioNote"></div>
+    </div>
+
+    <div id="stackGrid" class="stack-grid"></div>
+    <div id="envStrip" class="env-strip"></div>
+
+    <div class="card mm-panel" id="mmPanel">
+      <div class="mm-head">
+        <div>
+          <div class="scenario-title">多机负载（controller + agent）</div>
+          <p class="scenario-sub">
+            controller 跑编排器 / LB / Redis / 控制台；其它机器只跑 <code>npm run agent</code>。
+            <b>控制台只负责把 agent 挂到 LB 并驱动负载，不会在别的机器上启动任何进程。</b>
+          </p>
+        </div>
+        <span class="badge gray" id="mmBadge">本机</span>
+      </div>
+      <div id="mmList" class="mm-list"></div>
+      <div class="mm-add">
+        <input id="mmInput" type="text" placeholder="http://h1:9100, http://h2:9100" spellcheck="false">
+        <button id="mmAddBtn" class="btn ghost small" type="button">加入下次启动</button>
+        <span class="muted" id="mmPending"></span>
+      </div>
+      <div class="mm-hint">
+        <div>在另一台机器上启动 agent：</div>
+        <pre><code>npm run agent -- --port=9100 \
+  --lb=http://&lt;controller-ip&gt;:3000 \
+  --token=&lt;SJS_LB_ADMIN_TOKEN&gt; \
+  --public-host=&lt;这台机器的 IP&gt;</code></pre>
+        <div class="muted">
+          然后在这里填入 <code>http://&lt;这台机器&gt;:9100</code>，加入后<b>下一次“启动架构”</b>会带着它一起
+          <code>POST /api/stack/up { agents:[…] }</code>。agent 进程本身必须先手动启动好，console 不会替你启动。
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="clients" class="section">
+    <div class="section-head">
+      <div>
+        <h2><span class="step">3</span>协作客户端</h2>
+        <p class="section-sub">在浏览器里打开真实的 SpreadJS 协作客户端。同一房间的两个客户端会实时同步；落在不同节点时，能否同步正是架构的差别。</p>
+      </div>
+      <div class="section-actions room-control">
+        <label class="inline-field">房间
+          <input id="roomInput" type="text" value="arch-lab-demo" spellcheck="false">
+        </label>
+        <button id="openAllBtn" class="btn primary small" type="button">打开全部客户端</button>
+        <button id="refreshClientsBtn" class="btn ghost small" type="button">刷新全部</button>
+      </div>
+    </div>
+    <div id="clientGrid" class="client-grid"></div>
+    <div class="client-tip">
+      提示：把客户端 A 固定在 node-8081、客户端 B 固定在另一个节点，然后编辑同一个单元格——
+      在 <b>分区多机（无 Redis 适配器）</b> 下，B 永远收不到；切到 <b>共享 room 多机</b> 就通了。
+    </div>
+  </section>
+
+  <section id="check" class="section">
+    <div class="section-head">
+      <div>
+        <h2><span class="step">4</span>架构体检</h2>
+        <p class="section-sub">检查针对<b>当前运行的技术栈</b>执行：同节点实时性、跨节点实时性、加入一致性、存储一致性、房间隔离、ACK 延迟、以及「最终一致掩盖断链」陷阱。</p>
+      </div>
+      <div class="section-actions">
+        <label class="inline-field">检查配置
+          <select id="checkConfig"></select>
+        </label>
+        <button id="runCheckBtn" class="btn primary" type="button">运行架构体检</button>
+      </div>
+    </div>
+    <div id="checkScenario" class="check-scenario"></div>
+    <div id="checkBody" class="check-body">
+      <div class="check-empty">还没有体检结果。启动一个架构，然后点「运行架构体检」。</div>
+    </div>
+    <div id="benchBody" class="bench-body"></div>
+  </section>
+
+  <section id="compare" class="section">
+    <div class="section-head">
+      <div>
+        <h2><span class="step">5</span>三种模式对比</h2>
+        <p class="section-sub">来自 <code>src/lab/modes.mjs</code> 的单一事实源：同一张表同时用于文档、控制台与检查结果。</p>
+      </div>
+    </div>
+    <div class="table-wrap" id="comparisonTable"></div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div>
+    SpreadJS 协同架构实验室 · MIT ·
+    <span class="muted">零授权 mirror 引擎只用于验证 Socket.IO 适配器与存储语义，不代表商业版行为。</span>
+  </div>
+  <div class="footer-links">
+    <a href="/client/?room=arch-lab-demo&label=独立客户端&seed=1" target="_blank" rel="noreferrer">单独打开客户端</a>
+    <a href="/api/catalogue" target="_blank" rel="noreferrer">/api/catalogue</a>
+    <a href="/api/stack" target="_blank" rel="noreferrer">/api/stack</a>
+  </div>
+</footer>
+
+<div id="notice" class="notice" role="status"></div>
+
+<div id="reportModal" class="modal" aria-hidden="true">
+  <div class="modal-card">
+    <div class="modal-head">
+      <h3>最新架构体检报告</h3>
+      <button id="closeReportBtn" class="btn ghost small" type="button">关闭</button>
+    </div>
+    <div id="reportBody" class="modal-body"><div class="skeleton-line"></div><div class="skeleton-line short"></div></div>
+  </div>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

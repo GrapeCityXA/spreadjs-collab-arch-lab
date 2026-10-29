@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 660" width="1200" height="660" font-family="'Segoe UI','Microsoft YaHei',sans-serif">
+  <defs>
+    <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7d8fa3"/>
+    </marker>
+    <marker id="a3o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#e8590c"/>
+    </marker>
+    <marker id="a3g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#4fae74"/>
+    </marker>
+    <style>
+      .bx  { fill:#f7f9fc; stroke:#c8d3e0; stroke-width:1.6; }
+      .bxn { fill:#eef4ff; stroke:#7aa2e3; stroke-width:1.8; }
+      .bxr { fill:#fff3f0; stroke:#e8837a; stroke-width:1.8; }
+      .bxo { fill:#fff6ee; stroke:#e8590c; stroke-width:2.2; stroke-dasharray:8 5; }
+      .bxk { fill:#f2f4f6; stroke:#c8d3e0; stroke-width:1.6; stroke-dasharray:6 5; }
+      .tb  { font-size:16px; font-weight:600; fill:#16232f; }
+      .t   { font-size:14px; fill:#33475b; }
+      .ts  { font-size:12.5px; fill:#67788a; }
+      .ttl { font-size:24px; font-weight:700; fill:#16232f; }
+      .sub { font-size:14px; fill:#67788a; }
+      .pnl { font-size:19px; font-weight:700; fill:#16232f; }
+      .ln  { stroke:#7d8fa3; stroke-width:1.9; fill:none; marker-end:url(#a3); }
+      .lno { stroke:#e8590c; stroke-width:2.4; fill:none; marker-end:url(#a3o); }
+      .lng { stroke:#4fae74; stroke-width:2.4; fill:none; marker-end:url(#a3g); }
+    </style>
+  </defs>
+
+  <rect width="1200" height="660" fill="#ffffff"/>
+  <text class="ttl" x="40" y="46">在线扩容与缩容</text>
+  <text class="sub" x="40" y="70">不需要停机、不需要会话迁移：节点加入即同步，节点消失客户端自动重连</text>
+
+  <!-- ================= panel L ================= -->
+  <rect x="25" y="92" width="565" height="530" rx="12" fill="#fbfcfe" stroke="#dbe3ec" stroke-width="1.5"/>
+  <text class="pnl" x="55" y="130">扩容｜在线加入一个新节点</text>
+
+  <rect class="bxn" x="55"  y="158" width="118" height="86" rx="9"/>
+  <text class="tb" x="114" y="194" text-anchor="middle">:8081</text>
+  <text class="ts" x="114" y="216" text-anchor="middle">运行中</text>
+
+  <rect class="bxn" x="182" y="158" width="118" height="86" rx="9"/>
+  <text class="tb" x="241" y="194" text-anchor="middle">:8082</text>
+  <text class="ts" x="241" y="216" text-anchor="middle">运行中</text>
+
+  <rect class="bxn" x="309" y="158" width="118" height="86" rx="9"/>
+  <text class="tb" x="368" y="194" text-anchor="middle">:8083</text>
+  <text class="ts" x="368" y="216" text-anchor="middle">运行中</text>
+
+  <rect class="bxo" x="436" y="158" width="118" height="86" rx="9"/>
+  <text class="tb" x="495" y="194" text-anchor="middle" fill="#c0520a">:8084</text>
+  <text class="ts" x="495" y="216" text-anchor="middle" fill="#c0520a">刚启动</text>
+
+  <path class="ln" d="M114,244 L114,300"/>
+  <path class="ln" d="M241,244 L241,300"/>
+  <path class="ln" d="M368,244 L368,300"/>
+  <path class="lno" d="M495,244 L495,300"/>
+  <path class="ln" d="M114,300 L495,300"/>
+
+  <rect class="bxr" x="55" y="306" width="499" height="70" rx="9"/>
+  <text class="tb" x="304" y="336" text-anchor="middle">Redis Pub/Sub ＋ 共享文档存储</text>
+  <text class="ts" x="304" y="358" text-anchor="middle">新节点连上同一 Redis、读同一份文档即可加入集群</text>
+
+  <text class="t" x="55" y="410" fill="#c0520a">● 新节点 → 老节点、老节点 → 新节点，双向同步实测通过</text>
+  <text class="t" x="55" y="436">● 既有节点的 pid 全程未变 —— 不需要重启任何人</text>
+  <text class="t" x="55" y="462">● 新节点必须在「入口还不知道它」的时候就先加入，</text>
+  <text class="t" x="55" y="486">　 所以这一步刻意不改 nginx，靠客户端直连验证</text>
+  <text class="t" x="55" y="520" fill="#67788a">需要额外处理的只有入口的 upstream 列表（属运维层）</text>
+
+  <text class="ts" x="55" y="576">实测：新起 :8084 → 双向编辑同步成立；服务端独立佐证落点 :8082=1, :8084=1</text>
+  <text class="ts" x="55" y="598">既有节点 pid：8081 / 8082 / 8083 均未变化</text>
+
+  <!-- ================= panel R ================= -->
+  <rect x="610" y="92" width="565" height="530" rx="12" fill="#fbfcfe" stroke="#dbe3ec" stroke-width="1.5"/>
+  <text class="pnl" x="640" y="130">缩容｜节点被强杀（最坏情况）</text>
+
+  <rect class="bxn" x="640" y="158" width="160" height="86" rx="9"/>
+  <text class="tb" x="720" y="194" text-anchor="middle">:8081</text>
+  <text class="ts" x="720" y="216" text-anchor="middle">运行中</text>
+
+  <rect class="bxk" x="810" y="158" width="160" height="86" rx="9"/>
+  <text class="tb" x="890" y="194" text-anchor="middle" fill="#9aa7b4">:8082</text>
+  <text class="ts" x="890" y="216" text-anchor="middle" fill="#b0453c">✕ 进程被杀</text>
+
+  <rect class="bxn" x="980" y="158" width="160" height="86" rx="9"/>
+  <text class="tb" x="1060" y="194" text-anchor="middle">:8083</text>
+  <text class="ts" x="1060" y="216" text-anchor="middle">运行中</text>
+
+  <path class="ln" d="M720,244 L720,300"/>
+  <path class="lng" d="M1060,244 L1060,300"/>
+  <path class="ln" d="M720,300 L1060,300"/>
+
+  <rect class="bxr" x="640" y="306" width="500" height="70" rx="9"/>
+  <text class="tb" x="890" y="336" text-anchor="middle">Redis Pub/Sub ＋ 共享文档存储</text>
+  <text class="ts" x="890" y="358" text-anchor="middle">Redis 与文档库必须独立于协同节点存活</text>
+
+  <!-- carol: on killed node, reconnects -->
+  <rect class="bx" x="660" y="410" width="130" height="60" rx="9"/>
+  <text class="tb" x="725" y="436" text-anchor="middle">carol</text>
+  <text class="ts" x="725" y="456" text-anchor="middle">原本在 :8082</text>
+
+  <path class="lng" d="M790,436 C 880,436 950,340 1002,250"/>
+  <text class="ts" x="802" y="432" fill="#3d8f5c">自动重连</text>
+  <text class="ts" x="802" y="452" fill="#3d8f5c">→ :8083</text>
+
+  <rect class="bxn" x="980" y="410" width="160" height="60" rx="9"/>
+  <text class="tb" x="1060" y="436" text-anchor="middle">dave</text>
+  <text class="ts" x="1060" y="456" text-anchor="middle">一直在 :8083</text>
+
+  <text class="t" x="640" y="512" fill="#3d8f5c">● 被牵连的客户端：自动重连到存活节点，OT 状态重新同步，双向编辑正常</text>
+  <text class="t" x="640" y="538" fill="#3d8f5c">● 另一节点上的客户端：断开 0 次、落点未变 —— 全程完全无感</text>
+  <text class="t" x="640" y="564" fill="#67788a">● 结论：不依赖 sticky session，也不要求入口先做优雅摘除</text>
+
+  <text class="ts" x="640" y="598">实测：两组客户端分布各跑一次 · 25/25 与 26/26 通过（强杀，无优雅关闭）</text>
+</svg>

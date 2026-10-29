@@ -1,0 +1,11 @@
+{
+  "lbPort": 3000,
+  "webPort": 5173,
+  "nodeBasePort": 8081,
+  "redisPort": 6379,
+  "redisUrl": "redis://127.0.0.1:6379",
+  "wsPath": "/collaboration/",
+  "defaultRoom": "arch-lab-demo",
+  "defaultNodes": 3,
+  "bindHost": "127.0.0.1"
+}

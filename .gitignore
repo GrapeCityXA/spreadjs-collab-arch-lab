@@ -1,0 +1,30 @@
+# runtime state (never commit)
+.lab/
+data/
+logs/
+reports/
+node_modules/
+
+# throwaway harnesses / copied trees used while developing the lab
+scratch/
+
+# official client build output (the hand-written index.html is committed)
+public/official/bundle.js
+public/official/bundle.js.map
+
+# local license keys (never commit)
+config/license.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Local environment and install diagnostics
+.env
+.env.*
+!.env.example
+.npm-cache/
+npm-debug.log*
