@@ -2,11 +2,24 @@
 
 [中文](README.md)
 
-Run three collaboration deployment patterns on your computer, edit a document from two pages, and check whether changes reach other users. The lab also includes deliberately broken configurations to show how synchronization can fail.
+Run collaboration deployment and load experiments in your own environment, then use the evidence with presales and support teams to assess hardware candidates. Required resources depend on concurrent documents, users per document, editing frequency and workbook complexity.
 
-The default `mirror` engine needs no commercial license key. It is a simplified demonstration engine for studying deployment behavior. The official engine is available separately with the appropriate license.
+Compare single-node, document-sharded and shared-room deployments, check synchronization, increase synthetic load and save reports. The lab also includes deliberately broken configurations for troubleshooting. See the [customer-environment experiment guide](docs/14-customer-sizing-guide.md) for the workflow (in Chinese).
 
-## Start here
+## Choose the right validation path
+
+| Purpose | Required implementation | Current entry points and capabilities |
+|---|---|---|
+| Validate orchestration, room routing, forwarding and reporting | `mirror` | Default startup; `check`, `bench` and `big-doc` support framework and synthetic-load experiments |
+| Assess CPU, memory, disk, network and machine counts for real business use | Real SpreadJS workbooks and the official collaboration client, server and OT (`real`) | Licensed integration page and small synchronization tests exist; automated business-capacity testing remains to be added |
+
+**Use mirror to validate the framework. Hardware assessment requires the real SpreadJS official collaboration pipeline, representative workbooks and operations, and resource monitoring.** Do not convert mirror throughput, latency or bytes per cell into official-engine hardware requirements.
+
+Here, `mirror` names the collaboration engine. The default `/client/` page also uses the real SpreadJS control, with a custom protocol for simple cell values. The `/official/` page with `--impl=real` uses the official collaboration pipeline. The `bench` tool sends mirror operations from simulated Node clients without browser workbooks. Adding a license or selecting `real` does not turn the existing `bench` into an official-engine capacity test; see the [official-engine guide](docs/07-license.md).
+
+See the [scope and disclaimer](DISCLAIMER.md#english) for model and example conditions, and the [verification record](docs/11-project-review.md) for completed checks.
+
+## Validate the framework first (mirror)
 
 Use Node.js 22 or 24 LTS and npm. Run these commands from this project's root:
 
@@ -25,7 +38,7 @@ npm run check
 npm run down
 ```
 
-`npm ci` installs from the committed lockfile. Start with `single`: it needs neither Redis nor license configuration. This repository focuses on Windows demonstrations that help users understand deployment options and test their own scenarios. Run the commands in PowerShell at the project root. Windows with Node.js 24 has been verified; macOS and Linux have not. The guides below and CLI messages are currently in Chinese.
+`npm ci` installs from the committed lockfile. Start with `single`: it needs neither Redis nor license configuration. Run the commands in PowerShell at the project root. Windows with Node.js 24 has been verified; macOS and Linux have not. The guides below and CLI messages are currently in Chinese.
 
 ## See synchronization
 
@@ -66,7 +79,92 @@ npm run down
 
 The expected summary is `expected-broken`. Other variants demonstrate missing room affinity and separate storage behind a working adapter.
 
-## Try a small load
+## Ask AI to help size hardware
+
+Give the following input to your AI assistant and ask it to read the [hardware consultation rules and capacity ledger](docs/13-ai-hardware-sizing.md), [performance guide](docs/05-performance.md) and [production boundaries](docs/06-production.md). The [2,000-document candidate ledger](docs/12-scenario-assessment-saas-2000docs.md) is a worked example. These Chinese-language guides help form a testable candidate; they do not certify the current official engine or your real workbooks.
+
+```text
+Use this repository's documentation to assess CPU, memory, disk, network and machine counts.
+Show formulas, units and remaining capacity after the specified failure.
+Separate: deterministic calculations, historical/demo measurements, engineering assumptions,
+candidate hardware, and items requiring validation. List missing inputs and what can be
+calculated already. Zero broadcast-model cores does not mean zero CPU or memory demand.
+Use mirror results only for framework experiments, not official-engine hardware sizing.
+Hardware measurements must use real SpreadJS and the official collaboration pipeline.
+Versions / engine / operating system / cloud region:
+Online documents, sessions (including multiple tabs), users-per-room distribution:
+Effective value/formula/styled-cell distribution, images/long text/import/export, JSON/compressed size:
+Per-user/per-room op frequency (average/peak), cells affected per op, average/p95/max op bytes:
+Does save mean incremental op or full workbook upload? Must ACK follow durable storage?
+Presence/cursor update frequency, bytes and subscriber scope:
+SLO: ACK/broadcast p95/p99, first open, full reconnect window, failure rate:
+History: hot retention, total archive retention, snapshot frequency, tiers and object versions:
+RPO (loss of acknowledged edits), single-document / whole-database RTO:
+Failure scope (process/host/AZ/region), concurrent deployment during failure, growth and budget:
+Existing raw measurements: hardware, connection time, steady write window/successful ops, component metrics:
+```
+
+### Four example questions
+
+Ask AI to read this page and the guides linked above, then copy one of the questions below. Replace the example values with your actual data and mark anything unavailable as `unknown`. Ask AI to identify missing inputs and design experiments with real SpreadJS and the official collaboration pipeline before making hardware recommendations.
+
+<details>
+<summary>1. What hardware for 1,000 users, each editing every 30 seconds?</summary>
+
+```text
+We have 1,000 users editing spreadsheets online, each making an edit about every
+30 seconds. We need an initial hardware recommendation. What business inputs
+are missing, and what should we clarify first? How should we design an experiment
+with real SpreadJS and the official collaboration pipeline to collect the
+measurements needed for a hardware decision?
+```
+
+</details>
+
+<details>
+<summary>2. How should a production SaaS with 2,000 documents and two users per document be sized?</summary>
+
+```text
+Our SaaS has 2,000 documents being edited concurrently, with two users per
+document, each saving every two seconds. Effective cell counts are 10k/100k/500k,
+in proportions of 60%/35%/5%. We need history recovery and production availability.
+How should we design experiments with real SpreadJS, the official collaboration
+pipeline and our intended storage to gather evidence for CPU, memory, disk,
+network and machine counts? What must we clarify about save semantics, retention,
+latency and failure targets? How should we prepare the workbooks and operations,
+monitor the experiment, and record results for a hardware assessment?
+```
+
+</details>
+
+<details>
+<summary>3. Can 4 cores and 8 GB handle 1,000 users editing one document?</summary>
+
+```text
+1,000 users share one document, each editing every two seconds. Is a server with
+4 cores and 8 GB enough? How can we verify this with real SpreadJS and the official
+collaboration pipeline? What inputs and measurements do we need? How should we
+test adding nodes and compare deployment modes to find out whether they improve
+this workload? Please design the experiments and explain how to judge the results.
+```
+
+</details>
+
+<details>
+<summary>4. How should we size and scale a service with many independent documents?</summary>
+
+```text
+Our application has 1,000 users, each editing their own document with about
+100,000 effective cells, once every two seconds. We expect the number of active
+documents to grow. How should we measure memory and other resource requirements
+with real SpreadJS, the official collaboration pipeline and our intended storage?
+What else do you need to know? How should we test scaling, choose expansion
+thresholds, monitor the experiments, and share the results for review?
+```
+
+</details>
+
+## Validate framework load with your scenario (mirror)
 
 ```sh
 npm run up -- --mode=single
@@ -74,7 +172,7 @@ npm run bench -- --users=50 --interval=2 --duration=20 --rooms=1
 npm run down
 ```
 
-`--interval` and `--duration` are in seconds. This measures the mirror engine, so its results do not establish official SpreadJS capacity. Increase load gradually and watch the load generator as well as the server.
+`--interval` and `--duration` are in seconds; duration is the target writing window. This validates mirror framework load. Hardware assessment requires separate measurements with real SpreadJS and the official collaboration pipeline. Increase framework load gradually and watch the load generator as well as the server.
 
 ## Commands and guides
 
@@ -84,16 +182,18 @@ npm run down
 | `npm run status` | Show the current deployment and node health |
 | `npm run web` | Start the console independently |
 | `npm run check` | Check a running mirror deployment; write JSON and Markdown reports |
-| `npm run bench` | Apply load to a running mirror deployment |
+| `npm run bench` | Run a mirror framework load experiment; does not assess official-engine hardware |
 | `npm run compare` | Start and check all three modes in sequence; needs Redis |
 | `npm run down` | Stop the deployment |
-| `npm run self-test` | Run acceptance tests; Redis-dependent cases are skipped when unavailable |
+| `npm run self-test` | Run engineering self-tests; Redis-dependent cases are skipped when unavailable |
 
 `check` does not need Chrome. Browser tests use `test:ui`; official-engine tests use `test:official`.
 
-Read the [quickstart](docs/01-quickstart.md), [mode guide](docs/02-modes.md), [decision guide](docs/03-decision-guide.md), [report guide](docs/04-architecture-check.md), [performance guide](docs/05-performance.md), [deployment notes](docs/06-production.md), [licensing guide](docs/07-license.md), [troubleshooting](docs/08-troubleshooting.md), [multi-machine runbook](docs/09-multi-machine.md), [command reference](docs/10-cli-reference.md) or the [worked scenario assessment](docs/12-scenario-assessment-saas-2000docs.md) (SaaS, 2 000 documents).
+Read the [quickstart](docs/01-quickstart.md), [mode guide](docs/02-modes.md), [decision guide](docs/03-decision-guide.md), [report guide](docs/04-architecture-check.md), [performance guide](docs/05-performance.md), [deployment notes](docs/06-production.md), [licensing guide](docs/07-license.md), [troubleshooting](docs/08-troubleshooting.md), [multi-machine runbook](docs/09-multi-machine.md), [command reference](docs/10-cli-reference.md), [AI hardware consultation template](docs/13-ai-hardware-sizing.md) or the [worked candidate capacity ledger](docs/12-scenario-assessment-saas-2000docs.md) (SaaS, 2 000 documents).
 
 ## Scope
+
+See the [scope and disclaimer](DISCLAIMER.md#english) for the full notice. The main technical limits are:
 
 - Mirror checks demonstrate this lab's forwarding, room isolation and storage behavior. They do not validate official OT conflict handling, complex workbook compatibility or official-engine performance.
 - Shared storage is a SQLite file on one computer. PostgreSQL integration is not implemented here; cross-host `shared` agents are rejected.

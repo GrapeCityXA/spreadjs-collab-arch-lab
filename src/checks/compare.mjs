@@ -13,7 +13,6 @@ import { MODES, VARIANT_IDS, VARIANTS } from '../lab/modes.mjs';
 import { up, down } from '../lab/orchestrator.mjs';
 import { runCheck } from '../checks/runner.mjs';
 import { timestampForFile } from '../checks/report.mjs';
-import { formatCores } from '../lab/scenario.mjs';
 
 const CHECK_IDS = ['room.placement', 'realtime.crossNode', 'join.consistency', 'store.consistency', 'eventual.mask'];
 
@@ -49,15 +48,16 @@ function degradeCell(result) {
 
 function renderComparison(results) {
   const lines = [];
-  lines.push('# 三种协同架构对比（本机实测）');
+  lines.push('# mirror 框架三种协同架构对比（本机实测）');
   lines.push('');
   lines.push(`- 生成时间：${new Date().toISOString()}`);
   lines.push('- 验证范围：mirror 演示的消息转发、房间隔离与文档共享；不代表官方 OT 行为或 SpreadJS 容量。');
+  lines.push('- 硬件评估必须使用真实 SpreadJS、官方协同服务和业务负载；本次只比较 mirror 框架行为。');
   const scenarioResult = results.find((r) => r.result?.scenario)?.result?.scenario;
   if (scenarioResult) {
     lines.push(
-      `- 场景（三种拓扑共用）：${scenarioResult.describe}（模型：≈ ${scenarioResult.model?.opsPerSecond} 次编辑/s · ` +
-        `扇出 ${scenarioResult.model?.fanoutPerSecond} 条/s · 预测 ${formatCores(scenarioResult.model?.predictedCores)} 核）`,
+      `- 场景（三种拓扑共用）：${scenarioResult.describe}（目标编辑 ${scenarioResult.model?.opsPerSecond} 次/s · ` +
+        `推算投递 ${scenarioResult.model?.fanoutPerSecond} 条/s）`,
     );
   }
   lines.push('- 说明：每一行都是在本机按该拓扑真实启动后跑同一套体检得到的，不是理论推导。');

@@ -40,7 +40,7 @@ export const MODES = {
       storeConsistent: true,
     },
     whenToUse: [
-      '同时编辑的用户规模在单进程容量之内（实测参考：约 1 核 / 1.27 万条广播每秒）',
+      '真实工作簿与目标编辑频率经过单进程测试，延迟和资源占用符合要求',
       '可以接受进程重启期间协同短暂中断（单点）',
       '希望部署与排障成本最低，先验证业务再做扩容',
     ],
@@ -50,7 +50,7 @@ export const MODES = {
       '需要多副本 / 多可用区部署',
     ],
     cost: '1 个进程 + 1 个存储',
-    risk: '单进程的广播扇出存在软上限：每进程承担的扇出越大，ACK 尾部延迟越容易被拉长（本仓库实测见 docs/05-performance.md）。',
+    risk: '单进程可能先受广播、文档运算或存储串行路径限制；历史广播系数不能保证当前版本容量，见 docs/05-performance.md。',
     requires: { redis: false, license: false, browser: false },
     docker: 'none',
   },
@@ -108,7 +108,7 @@ export const MODES = {
     whenToUse: [
       '同一文档的协作者可能被分发到任意节点，无法做亲和',
       '要求任意节点故障后，客户端重连到其它节点仍能继续协同',
-      '需要水平扩容单个大文档的协同能力',
+      '需要验证同一文档跨节点连接时的同步路径；单文档吞吐仍须单独测试',
     ],
     notFor: [
       '不愿意维护 Redis 与共享数据库（组件更多、排障面更大）',
@@ -116,8 +116,8 @@ export const MODES = {
     ],
     cost: 'N 个进程 + 负载均衡器 + Redis + 共享数据库',
     risk:
-      '组件更多；广播扇出是主要成本（实测约 1 核 / 1.27 万条广播每秒）；presence 只能保证最终一致；' +
-      'Redis 与共享库本身成为新的单点/瓶颈。',
+      '组件更多；广播、文档状态和存储都可能限制容量，历史广播模型不能代表全部开销；' +
+      'Redis 与共享库还需分别验证容量和故障切换。',
     requires: { redis: true, license: false, browser: false },
     docker: 'redis',
   },
@@ -167,7 +167,7 @@ export const VARIANTS = {
 };
 
 /** Merge a mode (or variant) with caller overrides into one effective config. */
-export function expandConfig({ mode = 'single', variant = null, ...overrides } = {}) {
+export function expandConfig({ mode = 'single', variant = null, remoteNodes = 0, ...overrides } = {}) {
   const base = variant ? VARIANTS[variant] : MODES[mode];
   if (!base) throw new Error(`unknown mode "${mode}" / variant "${variant}"`);
   const target = variant ? MODES[base.basedOn] : base;
@@ -188,7 +188,9 @@ export function expandConfig({ mode = 'single', variant = null, ...overrides } =
     if (overrides[key] !== undefined && overrides[key] !== null) cfg[key] = overrides[key];
   }
   cfg.nodes = Math.max(1, Number(cfg.nodes) || 1);
-  if (cfg.nodes === 1) {
+  // `nodes` counts controller-local processes. One local process plus agents is
+  // still a multi-node topology and needs its normal LB/adapter/store settings.
+  if (cfg.nodes === 1 && remoteNodes === 0) {
     cfg.lb = false;
     cfg.adapter = false;
     cfg.affinity = null;

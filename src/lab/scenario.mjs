@@ -7,14 +7,16 @@
  *
  * One formula lives here and nowhere else:
  *
- *   usersPerRoom    = ceil(users / rooms)
+ *   usersPerRoom    = users / rooms
  *   opsPerSecond    = users / (opIntervalMs / 1000)
- *   fanoutPerSecond = opsPerSecond * (usersPerRoom - 1)
+ *   q = floor(users / rooms), r = users % rooms
+ *   fanoutPerSecond = [r * (q + 1) * q + (rooms - r) * q * (q - 1)] / intervalSeconds
  *   predictedCores  = fanoutPerSecond / 12700 * (presence ? 1.17 : 1)
  *
- * The 12 700 broadcasts/s/core and the +17 % presence fan-out come from
- * docs/05-performance.md (measured on the reference workload); everything derived
- * here is a MODEL, and every surface that shows it must say so.
+ * Rooms are balanced: r rooms have q + 1 users and the others have q users.
+ * The historical reference coefficient and presence CPU multiplier come from
+ * docs/05-performance.md; this models broadcast CPU, not total system resources.
+ * Presence does not change the edit fan-out count returned by this model.
  */
 
 /** Check defaults: a short, honest load sample on top of the correctness probes. */
@@ -38,7 +40,7 @@ export const LIMITS = Object.freeze({
 
 /** Broadcast messages per second that one CPU core sustained in the reference test. */
 export const FANOUT_PER_CORE = 12700;
-/** Presence adds fan-out (and a little latency): measured +17 % in the reference test. */
+/** Historical presence allowance for broadcast CPU; not a measured message count. */
 export const PRESENCE_FACTOR = 1.17;
 
 function fail(message) {
@@ -108,23 +110,39 @@ export function scenarioFromFlags(flags = {}, defaults = CHECK_DEFAULTS) {
   return normalizeScenario(input, defaults);
 }
 
-/**
- * The one model. Every number is derived from users/interval/rooms — do not
- * duplicate this arithmetic in the console, docs or tests.
- */
+/** Global user index → balanced room index, shared by local and distributed loads. */
+export function roomIndexForUser(userIndex, totalUsers, rooms) {
+  if (!Number.isSafeInteger(totalUsers) || totalUsers < 1 ||
+      !Number.isSafeInteger(rooms) || rooms < 1 || rooms > totalUsers ||
+      !Number.isSafeInteger(userIndex) || userIndex < 0 || userIndex >= totalUsers) {
+    fail('房间分配需要有效的全局用户序号、总用户数和房间数');
+  }
+  return Math.floor(userIndex * rooms / totalUsers);
+}
+
+/** The balanced-room model; CPU covers broadcast work only. */
 export function modelScenario(scenario, { presence = false } = {}) {
-  const users = Math.max(1, Number(scenario.users) || 1);
-  const rooms = Math.max(1, Math.min(Number(scenario.rooms) || 1, users));
+  const users = Math.max(1, Math.floor(Number(scenario.users) || 1));
+  const rooms = Math.max(1, Math.min(Math.floor(Number(scenario.rooms) || 1), users));
   const opIntervalMs = Math.max(1, Number(scenario.opIntervalMs) || 1000);
-  const usersPerRoom = Math.ceil(users / rooms);
+  const usersPerRoom = users / rooms;
+  const usersPerRoomMin = Math.floor(usersPerRoom);
+  const roomsWithExtraUser = users % rooms;
+  const usersPerRoomMax = usersPerRoomMin + (roomsWithExtraUser ? 1 : 0);
   const opsPerSecond = users / (opIntervalMs / 1000);
-  const fanoutPerSecond = opsPerSecond * (usersPerRoom - 1);
+  const recipientPairs = roomsWithExtraUser * usersPerRoomMax * (usersPerRoomMax - 1) +
+    (rooms - roomsWithExtraUser) * usersPerRoomMin * (usersPerRoomMin - 1);
+  const fanoutPerSecond = recipientPairs / (opIntervalMs / 1000);
   const predictedCores = (fanoutPerSecond / FANOUT_PER_CORE) * (presence ? PRESENCE_FACTOR : 1);
   return {
     usersPerRoom,
-    opsPerSecond: Number(opsPerSecond.toFixed(2)),
-    fanoutPerSecond: Number(fanoutPerSecond.toFixed(0)),
-    predictedCores: Number(predictedCores.toFixed(2)),
+    usersPerRoomMin,
+    usersPerRoomMax,
+    roomsWithExtraUser,
+    opsPerSecond,
+    fanoutPerSecond,
+    predictedCores,
+    cpuScope: 'broadcast-only',
     presence,
   };
 }
@@ -142,7 +160,7 @@ export function describeScenario(scenario) {
 
 /** One-line model summary used by the CLI header and the console. */
 export function describeModel(model) {
-  return `≈ ${model.opsPerSecond} 次编辑/s · 扇出 ${model.fanoutPerSecond} 条/s · 模型预测 ${formatCores(model.predictedCores)} 核`;
+  return `≈ ${Number(model.opsPerSecond.toFixed(2))} 次编辑/s · 扇出 ${Number(model.fanoutPerSecond.toFixed(2))} 条/s · 广播 CPU 模型预测 ${formatCores(model.predictedCores)} 核`;
 }
 
 /**
@@ -152,7 +170,7 @@ export function describeModel(model) {
 export function formatCores(value) {
   const cores = Number(value);
   if (!Number.isFinite(cores)) return '—';
-  return cores < 0.01 ? '<0.01' : String(value);
+  return cores > 0 && cores < 0.01 ? '<0.01' : String(Number(cores.toFixed(2)));
 }
 
 /** Web/CLI handedness: the defaults and hard limits, so no client hardcodes them. */
@@ -166,10 +184,13 @@ export function scenarioCatalogue() {
       rooms: { min: 1, max: LIMITS.maxRooms },
     },
     formula: {
+      usersPerRoom: 'users / rooms（均匀分配的平均人数）',
       opsPerSecond: 'users / (opIntervalMs / 1000)',
-      fanoutPerSecond: 'opsPerSecond × (ceil(users / rooms) - 1)',
+      roomDistribution: 'q = floor(users / rooms), r = users % rooms；r 个房间 q + 1 人，其余 q 人',
+      fanoutPerSecond: '(r × (q + 1) × q + (rooms - r) × q × (q - 1)) / (opIntervalMs / 1000)',
       predictedCores: `fanoutPerSecond / ${FANOUT_PER_CORE} × (presence ? ${PRESENCE_FACTOR} : 1)`,
-      source: 'docs/05-performance.md（实测口径：1000 用户 / 单文档 / 33.3k 广播/s ≈ 2.21 核）',
+      cpuScope: '仅广播 CPU；零广播不代表零 CPU、内存、磁盘或网络成本',
+      source: 'docs/05-performance.md（历史参考系数，原始标定产物未随仓库发布）',
     },
   };
 }

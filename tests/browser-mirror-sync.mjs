@@ -227,7 +227,16 @@ async function main() {
     assert('控制台拿到了 API 数据', Boolean(consoleReady));
     const stackText = await consoleCdp.evaluate('(document.getElementById("stackStatus")?.textContent ?? "").trim()');
     assert('控制台显示当前 stack 状态', /运行|shared|健康/i.test(stackText), `stackStatus="${stackText}"`);
-    assert('控制台说明 mirror 的验证范围', await consoleCdp.evaluate('document.body.textContent.includes("不能证明官方 OT 行为或 SpreadJS 容量")'));
+    assert('控制台区分 mirror 实验与官方硬件评估', await consoleCdp.evaluate('document.body.textContent.includes("硬件评估必须使用真实 SpreadJS、官方协同服务和业务负载") && document.body.textContent.includes("当前 bench 尚未提供官方负载测试")'));
+    const roomModel = await consoleCdp.evaluate(`(() => {
+      const model = window.__labConsole.scenarioModel({ users: 10000, rooms: 9999, opIntervalMs: 50 });
+      const solo = window.__labConsole.scenarioModel({ users: 1000, rooms: 1000, opIntervalMs: 2000 });
+      return { fanout: model.fanoutPerSecond, min: model.usersPerRoomMin, max: model.usersPerRoomMax,
+        soloOps: solo.opsPerSecond, soloFanout: solo.fanoutPerSecond };
+    })()`);
+    assert('控制台精确计算非整除房间，单人房间仍有编辑负载',
+      roomModel.fanout === 40 && roomModel.min === 1 && roomModel.max === 2 &&
+      roomModel.soloOps === 500 && roomModel.soloFanout === 0, JSON.stringify(roomModel));
     const invalid = await consoleCdp.evaluate(`(() => {
       const input = document.getElementById('scenarioInterval');
       input.value = '0';
@@ -247,8 +256,14 @@ async function main() {
     assert('错误场景保留原输入、不发请求且不锁住按钮', invalid);
     await consoleCdp.evaluate(`window.__labConsole.setScenario({ users: 4, opIntervalMs: 500, durationMs: 1000, rooms: 1 }); window.__labConsole.runBench(); true`);
     const completed = await waitFor(consoleCdp, 'window.__labConsole.state.bench.status === "done"', 30_000);
-    assert('修正输入后可完成负载并显示未判定性能达标', Boolean(completed) && await consoleCdp.evaluate(
-      'window.__labConsole.state.bench.stats?.outcome?.writesPassed === true && document.getElementById("benchBody").textContent.includes("性能是否满足需求")'));
+    assert('修正输入后可完成 mirror 实验，结果不作硬件容量判定', Boolean(completed) && await consoleCdp.evaluate(`(() => {
+      const stats = window.__labConsole.state.bench.stats;
+      const body = document.getElementById('benchBody').textContent;
+      const derived = document.getElementById('scenarioDerived').textContent;
+      return stats?.engine === 'mirror' && stats.outcome?.writesPassed === true &&
+        stats.outcome.performance === 'not-evaluated' && body.includes('未评估生产硬件容量') &&
+        !/预测.*核|CPU.*模型/.test(body + derived);
+    })()`));
     consoleCdp.close();
   } catch (err) {
     results.error = err.message;

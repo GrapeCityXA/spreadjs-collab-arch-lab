@@ -26,7 +26,6 @@ import { loadLabConfig } from './lab/paths.mjs';
 import {
   BENCH_DEFAULTS,
   CHECK_DEFAULTS,
-  describeModel,
   describeScenario,
   modelScenario,
   scenarioFromFlags,
@@ -131,12 +130,15 @@ SpreadJS 协同架构验证实验室
   down      停止当前拓扑
   status    查看当前拓扑与健康状态
   web       只启动控制台（可在页面上启动/停止/体检）
-  check     对当前运行的拓扑做架构体检，产出报告
-  compare   依次跑三种拓扑，产出对比报告
-  bench     对当前拓扑做小规模压测（仅 mirror 引擎）
+  check     对当前 mirror 拓扑做架构体检，产出报告
+  compare   依次体检三种 mirror 拓扑，产出对比报告
+  bench     对当前拓扑做 mirror 框架负载实验
   doctor    环境自检：这台机器能跑哪几种拓扑
   agent     （在其它机器上）启动受控节点，供 controller 用 --agents 接入
             直接运行：npm run agent -- --port=9100 --lb=http://<controller>:3000 --token=<token> --public-host=<本机IP>
+
+硬件评估必须使用真实 SpreadJS、官方协同服务和业务负载。
+当前 bench 仅运行 mirror 合成负载；test:official 只验证官方页面同步。
 
 up 选项
   --mode=single|sharded|shared     架构模式（默认 single）
@@ -173,7 +175,7 @@ compare 选项
 bench 选项
   --users=N            并发用户数（默认 50）
   --interval=秒        每个用户多久编辑一次（默认 0.6）
-  --duration=秒        压测时长（默认 20）
+  --duration=秒        框架负载实验时长（默认 20）
   --rooms=N            房间数（默认 1）
   --distribute[=local,http://h1:9100]
                        把用户分摊到多台机器（本机 + agent），用于单机压不动的场景
@@ -313,8 +315,8 @@ async function commandCheck(flags) {
     process.env.SJS_LAB_MAX_LOAD_CLIENTS = String(Number(limit));
   }
   progressLog.info(`[lab] 场景：${describeScenario(scenario)}`);
-  progressLog.info(`[lab] 模型：${describeModel(model)}`);
-  progressLog.info('[lab] 正在体检当前运行的拓扑…');
+  progressLog.info(`[lab] 目标编辑 ${model.opsPerSecond} 次/s · 推算投递 ${model.fanoutPerSecond} 条/s`);
+  progressLog.info('[lab] mirror 架构体检；硬件评估必须使用真实 SpreadJS、官方协同服务和业务负载。');
   const { result, files } = await runCheck({
     scenario,
     onProgress: (item) => {
@@ -356,7 +358,9 @@ async function commandCompare(flags) {
   for (const mode of modes) validateMode(mode, null);
   const scenario = scenarioFromFlags(flags, CHECK_DEFAULTS);
   log.info(`[lab] 依次启动并体检：${modes.join(' → ')}${parseBool(flags.variants, false) ? '（含反模式变体）' : ''}`);
-  log.info(`[lab] 场景（三种拓扑共用）：${describeScenario(scenario)}（${describeModel(modelScenario(scenario))}）`);
+  const model = modelScenario(scenario);
+  log.info(`[lab] 场景（三种拓扑共用）：${describeScenario(scenario)}（目标编辑 ${model.opsPerSecond} 次/s · 推算投递 ${model.fanoutPerSecond} 条/s）`);
+  log.info('[lab] 本次比较 mirror 框架行为；硬件评估必须使用真实 SpreadJS、官方协同服务和业务负载。');
   log.info('[lab] 每种拓扑都会真实启动一次，大约需要 1-3 分钟。');
   const { results, files } = await runCompare({
     modes,

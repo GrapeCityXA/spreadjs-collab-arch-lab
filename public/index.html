@@ -45,7 +45,7 @@
       <div class="eyebrow">Real-time collaboration · architecture lab</div>
       <h1>选一种协同架构，亲手看看它到底交付了什么。</h1>
       <p>
-        启动单机 / 分区多机 / 共享 room 多机三种拓扑，打开真实 SpreadJS 协作客户端，
+        启动单机 / 分区多机 / 共享 room 多机三种拓扑。默认页面使用真实 SpreadJS 控件，协同采用 mirror 演示协议；
         再跑一次「架构体检」：哪些承诺成立、哪些静默失败、哪些只是「最终一致」的假象，
         都用同一套可复现的检查说清楚。
       </p>
@@ -103,15 +103,15 @@
     <div class="card scenario-panel" id="scenarioPanel">
       <div class="scenario-head">
         <div>
-          <div class="scenario-title">实验场景</div>
-          <p class="scenario-sub">三个模式共用这组输入。mirror 验证消息转发、房间隔离与文档共享，不能证明官方 OT 行为或 SpreadJS 容量。压测完成后，还需按你的延迟和失败率要求判断结果。</p>
+          <div class="scenario-title">mirror 框架实验场景</div>
+          <p class="scenario-sub">默认演示页面使用真实 SpreadJS 控件，协同路径采用 mirror 演示协议。硬件评估必须使用真实 SpreadJS、官方协同服务和业务负载；当前 bench 尚未提供官方负载测试。</p>
         </div>
         <div class="scenario-actions">
           <a href="#scenarioPanel" id="scenarioReset" class="link-btn">恢复默认</a>
           <label class="check-inline" title="跨机分摊：把负载按 remote agent 拆分（仅负载均衡拓扑有意义）">
             <input id="benchDistribute" type="checkbox"> 跨机分摊
           </label>
-          <button id="benchRunBtn" class="btn primary small" type="button">压测（按场景）</button>
+          <button id="benchRunBtn" class="btn primary small" type="button">mirror 框架负载实验</button>
         </div>
       </div>
       <div class="scenario-inputs">

@@ -44,6 +44,9 @@
     "self-test": "node tests/self-test.mjs",
     "test:api": "node tests/public-api.mjs",
     "test:inputs": "node tests/input-contract.mjs",
+    "test:capacity": "node tests/capacity-regression.mjs",
+    "test:load": "node tests/load-contract.mjs",
+    "test:topology": "node tests/topology-contract.mjs",
     "test:distributed": "node tests/distributed-smoke.mjs",
     "test:ui": "node tests/browser-mirror-sync.mjs",
     "test:official": "node tests/official-ot-sync.mjs"

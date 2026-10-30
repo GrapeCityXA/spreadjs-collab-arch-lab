@@ -23,6 +23,7 @@ npm run doctor
 | 节点、入口、检查逻辑 | `npm run self-test`，需要 Redis 才能覆盖全部模式 |
 | 控制台 / CLI JSON / 停止接口 | `npm run test:api` |
 | 场景输入、结果判定、授权配置 | `npm run test:inputs`，涉及页面时再运行 `test:ui` |
+| 容量模型 / 负载计量 / 本机与远端节点数 | `npm run test:capacity`、`npm run test:load`、`npm run test:topology`；分布式路径再运行 `test:distributed` |
 | 页面 | `npm run test:ui`，需要 Chrome / Edge |
 | agent / 分布式负载 | `npm run test:distributed` |
 | 官方协同接入 | 构建页面后运行 `npm run test:official`，需要有效授权和浏览器 |

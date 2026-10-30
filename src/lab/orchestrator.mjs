@@ -156,14 +156,14 @@ export async function up({
   log = console,
 } = {}) {
   const config = loadLabConfig();
-  const cfg = expandConfig({ mode, variant, ...overrides });
   const remoteAgents = (Array.isArray(agents) ? agents : []).map(normalizeAgentUrl).filter(Boolean);
+  const cfg = expandConfig({ mode, variant, ...overrides, remoteNodes: remoteAgents.length });
   // A load balancer is the whole point of multi-machine: without one, extra nodes on
   // other hosts are just unreachable servers.
   if (remoteAgents.length && !cfg.lb) {
-    const why = cfg.nodes === 1 ? '当前 --nodes=1，不会启动负载均衡' : '当前拓扑没有负载均衡';
     throw new Error(
-      `${why}，远端节点无处注册，无法接入。多机测试请用 --nodes>=2（推荐 --mode=sharded，或 --mode=shared）。`,
+      '当前拓扑没有负载均衡，远端节点无处注册。多机测试请用 --mode=sharded 或 --mode=shared；' +
+        '--nodes 只计算主控本地节点，可以为 1。single 模式不支持接入 agent。',
     );
   }
   if (remoteAgents.length) {

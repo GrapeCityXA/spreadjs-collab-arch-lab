@@ -1,10 +1,10 @@
 /**
- * Mini load test against the running mirror stack.
+ * Framework load experiment against the running mirror stack.
  *
- * This is the bridge between the lab and the capacity numbers in
- * `docs/05-performance.md`: instead of trusting someone else's laptop, run the same
- * experiment on yours — with **your** scenario (users × seconds-per-edit), optionally
- * spread over several machines when one generator cannot push enough.
+ * Exercises message forwarding, room isolation and shared document state with a
+ * synthetic scenario (users × seconds-per-edit), optionally using several load
+ * generators. It does not drive a real SpreadJS workbook or measure the official
+ * collaboration implementation, so its results cannot establish hardware capacity.
  *
  * The generating loop lives in `src/bench/load.mjs` (shared with `check`'s load phase
  * and the remote agent), so a number printed here means the same thing everywhere.
@@ -13,8 +13,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { REPORT_DIR, loadLabConfig } from '../lab/paths.mjs';
 import { readState } from '../lab/state.mjs';
-import { runLoad } from './load.mjs';
-import { BENCH_DEFAULTS, describeModel, describeScenario, modelScenario, normalizeScenario } from '../lab/scenario.mjs';
+import { createLoadGates, runLoad } from './load.mjs';
+import { BENCH_DEFAULTS, describeScenario, modelScenario, normalizeScenario } from '../lab/scenario.mjs';
 
 export function benchOutcome(ops, cancelled = false) {
   const writesPassed = !cancelled && ops.ok > 0 && ops.failed === 0;
@@ -23,7 +23,7 @@ export function benchOutcome(ops, cancelled = false) {
     writesPassed,
     performance: 'not-evaluated',
     message: cancelled ? '负载已取消，结果不完整。' : writesPassed ?
-      '负载已完成，本次写入没有报告失败；性能是否满足需求，请结合延迟、样本数和实际场景判断。' :
+      'mirror 框架负载实验已完成，本次合成写入没有报告失败；本次未评估生产硬件容量。' :
       '本次存在写入失败或没有成功写入，请检查失败数和日志。',
   };
 }
@@ -92,27 +92,6 @@ function mergeBroadcast(perParticipant, aggregate) {
 }
 
 /**
- * Broadcast fan-out must be computed from the WHOLE scenario, not per participant:
- * distributed participants share the same room ids, so each one only knows its own
- * slice of the membership. Summing per-participant fan-out would under-report by a
- * factor of the participant count (2000 users over 3 generators would look like 666
- * recipients per write instead of 1999). Rooms are recomposed here by index.
- */
-function measuredFanoutAcrossParticipants(statsList, elapsedMs) {
-  const list = (Array.isArray(statsList) ? statsList : []).filter(Boolean);
-  if (!list.length) return 0;
-  const roomCount = Math.max(...list.map((stat) => (Array.isArray(stat.perRoom) ? stat.perRoom.length : 0)));
-  let fanoutOps = 0;
-  for (let room = 0; room < roomCount; room++) {
-    const ops = list.reduce((sum, stat) => sum + (Number(stat.perRoom?.[room]) || 0), 0);
-    const members = list.reduce((sum, stat) => sum + (Number(stat.membersPerRoom?.[room]) || 0), 0);
-    fanoutOps += ops * Math.max(0, members - 1);
-  }
-  const seconds = Math.max(1, Number(elapsedMs) || 1) / 1000;
-  return Number((fanoutOps / seconds).toFixed(0));
-}
-
-/**
  * @param {{scenario?: object, distribute?: boolean|string[], room?: string, log?: object}} options
  */
 export async function runBench({ scenario, distribute = false, room = 'bench', log = console } = {}) {
@@ -124,7 +103,7 @@ export async function runBench({ scenario, distribute = false, room = 'bench', l
   }
   const cfg = stack.config ?? {};
   if (cfg.impl !== 'mirror') {
-    throw new Error('bench 目前只支持 mirror 演示；官方实现请先用 npm run test:official 验证页面同步，容量测试需另行设计真实业务负载。');
+    throw new Error('bench 仅支持 mirror 框架负载实验。硬件评估必须使用真实 SpreadJS、官方协同服务和业务负载；test:official 只验证页面同步，切换 impl=real 不会让 bench 支持官方负载。');
   }
   const config = loadLabConfig();
   const lbBase = stack.lb ? stack.lb.base ?? `http://127.0.0.1:${stack.lb.port}` : null;
@@ -137,7 +116,7 @@ export async function runBench({ scenario, distribute = false, room = 'bench', l
   const participants = resolveParticipants(distribute, stack);
   const token = stack.lb?.adminToken ?? null;
 
-  log.info?.(`[lab] 压测：${describeScenario(sc)}（${describeModel(model)}）`);
+  log.info?.(`[lab] mirror 框架负载实验：${describeScenario(sc)}（目标编辑 ${model.opsPerSecond} 次/s · 推算投递 ${model.fanoutPerSecond} 条/s）`);
   log.info?.(`[lab] 目标：${localEntry}${path}（${stack.lb ? `负载均衡 :${stack.lb.port}` : `节点 :${stack.nodes[0].port}`}）`);
   if (participants.length > 1) {
     log.info?.(`[lab] 分摊：${participants.map((p) => (p.kind === 'local' ? '本机' : p.target)).join(' + ')}（每份 ${Math.floor(sc.users / participants.length)} 用户）`);
@@ -147,7 +126,7 @@ export async function runBench({ scenario, distribute = false, room = 'bench', l
   let aggregate;
   let perParticipant = [];
 
-  if (participants.length === 1) {
+  if (participants.length === 1 && participants[0].kind === 'local') {
     aggregate = await runLoad({
       url: localEntry,
       path,
@@ -162,7 +141,8 @@ export async function runBench({ scenario, distribute = false, room = 'bench', l
     // need to special-case "local-only" (the old shape had `participants: []`).
     perParticipant = [{ ...aggregate, kind: 'local', target: 'local', label: '本机', host: null }];
   } else {
-    const { splitUsers, mergeLoadStats, startLoad, probeAgent } = await controllerHelpers();
+    const { splitUsers, mergeLoadStats, startLoad, probeAgent, startPreparedLoad, releaseLoad, cancelLoad,
+      coordinateLoads } = await controllerHelpers();
     // Fail fast: a dead agent must not silently shrink the load (the numbers would lie).
     for (const participant of participants) {
       if (participant.kind !== 'agent') continue;
@@ -177,41 +157,75 @@ export async function runBench({ scenario, distribute = false, room = 'bench', l
     }
     const slices = splitUsers(sc.users, participants);
     const roomPrefix = `${room}-${Date.now().toString(36)}`;
-    const results = await Promise.all(
-      slices.map(async (slice) => {
+    const loadId = roomPrefix;
+    const controls = slices.map(() => ({ ...createLoadGates({ durationMs: sc.durationMs }),
+      controller: new AbortController(), ready: false, completed: false }));
+    const results = await coordinateLoads(slices, {
+      launch: async (slice, index) => {
         if (slice.kind === 'local') {
+          const control = controls[index];
           const stats = await runLoad({
             url: localEntry,
             path,
             users: slice.users,
+            totalUsers: sc.users,
+            totalRooms: sc.rooms,
+            userOffset: slice.userOffset,
             opIntervalMs: sc.opIntervalMs,
             durationMs: sc.durationMs,
             rooms: sc.rooms,
             roomPrefix,
             labelPrefix: 'bench',
+            signal: control.controller.signal,
+            waitForStart: async ({ signal }) => { control.ready = true; await control.startGate.wait({ signal }); },
+            waitForFinish: async ({ signal }) => { control.completed = true; await control.finishGate.wait({ signal }); },
           });
           return { ...stats, kind: 'local', target: 'local', label: '本机', host: null };
         }
         const stats = await startLoad(slice.target, {
           token,
+          signal: controls[index].controller.signal,
           // The agent must reach the LB too, so it gets the controller's public address.
           lbUrl: remoteEntry,
           path,
           users: slice.users,
+          totalUsers: sc.users,
+          totalRooms: sc.rooms,
+          userOffset: slice.userOffset,
           opIntervalMs: sc.opIntervalMs,
           durationMs: sc.durationMs,
           rooms: sc.rooms,
           roomPrefix,
+          loadId,
+          coordinated: true,
         });
         return { ...stats, kind: 'agent', target: slice.target, label: `agent ${hostOf(slice.target)}`, host: hostOf(slice.target) };
-      }),
-    );
+      },
+      ready: async (slice, index) => {
+        if (slice.kind === 'local') return controls[index].ready;
+        const status = await probeAgent(slice.target, { token });
+        return status.load?.loadId === loadId && status.load?.ready === true;
+      },
+      completed: async (slice, index) => {
+        if (slice.kind === 'local') return controls[index].completed;
+        const status = await probeAgent(slice.target, { token });
+        return status.load?.loadId === loadId && status.load?.completed === true;
+      },
+      start: async (slice, index) => slice.kind === 'local' ? controls[index].startGate.release() : startPreparedLoad(slice.target, { token, loadId }),
+      release: async (slice, index) => slice.kind === 'local' ? controls[index].finishGate.release() : releaseLoad(slice.target, { token, loadId }),
+      cancel: async (slice, index) => {
+        controls[index].controller.abort();
+        controls[index].startGate.release();
+        controls[index].finishGate.release();
+        if (slice.kind === 'agent') await cancelLoad(slice.target, { token });
+      },
+    }, { completedTimeoutMs: sc.durationMs + 90_000 });
     perParticipant = results;
     aggregate = mergeLoadStats(results);
+    if (aggregate.timingBasis !== 'legacy-elapsed-fallback') {
+      aggregate.timingBasis = 'coordinated-longest-participant-writing-window';
+    }
   }
-
-  const fanoutBaseline = perParticipant.length ? perParticipant : [aggregate];
-  const mergedFanoutPerSecond = measuredFanoutAcrossParticipants(fanoutBaseline, aggregate.elapsedMs);
 
   const summary = {
     generatedAt: new Date().toISOString(),
@@ -233,24 +247,66 @@ export async function runBench({ scenario, distribute = false, room = 'bench', l
       target: p.target ?? 'local',
       host: p.host ?? null,
       users: p.users,
+      requestedUsers: p.requestedUsers,
+      userOffset: p.userOffset,
+      membersPerRoom: p.membersPerRoom,
+      roomDistribution: p.roomDistribution,
+      perRoom: p.perRoom,
       ops: p.ops,
+      opsSent: p.opsSent,
       opsFailed: p.opsFailed ?? p.errors ?? 0,
       opsPerSecond: p.opsPerSecond,
+      sentOpsPerSecond: p.sentOpsPerSecond,
+      targetOpsPerSecond: p.targetOpsPerSecond,
+      targetRateAchievement: p.targetRateAchievement,
+      connectionMs: p.connectionMs,
+      writingMs: p.writingMs,
+      elapsedMs: p.elapsedMs,
+      startWaitMs: p.startWaitMs,
+      finishWaitMs: p.finishWaitMs,
+      connectionBudgetMs: p.connectionBudgetMs,
+      receiveWindowMs: p.receiveWindowMs,
+      broadcastReceiveBasis: p.broadcastReceiveBasis,
+      cancelled: p.cancelled,
+      skipped: p.skipped,
       fanoutPerSecond: p.fanoutPerSecond,
+      fanoutBasis: p.fanoutBasis,
+      broadcastReceived: p.broadcastReceived,
+      broadcastReceivedPerSecond: p.broadcastReceivedPerSecond,
       ackMs: p.ackMs,
       errors: p.opsFailed ?? p.errors ?? 0,
     })),
-    elapsedMs: Date.now() - startedAt,
+    elapsedMs: aggregate.elapsedMs,
+    connectionMs: aggregate.connectionMs,
+    writingMs: aggregate.writingMs,
+    timingBasis: aggregate.timingBasis,
+    coordination: aggregate.timingBasis === 'coordinated-longest-participant-writing-window' ? {
+      allReadyBeforeWriting: true,
+      allCompletedBeforeClosing: true,
+      note: '全部连接 ready 后释放写入，全部写入 completed 后释放连接；各主机无需时钟同步，写入窗口取最长参与者。',
+    } : null,
+    controllerElapsedMs: Date.now() - startedAt,
     ops: {
       ok: aggregate.ops,
       failed: aggregate.errors ?? aggregate.opsFailed ?? 0,
       successRate: aggregate.ops + (aggregate.errors ?? aggregate.opsFailed ?? 0) ? aggregate.ops / (aggregate.ops + (aggregate.errors ?? aggregate.opsFailed ?? 0)) : 0,
     },
     opsPerSecond: aggregate.opsPerSecond,
-    fanoutPerSecond: mergedFanoutPerSecond,
-    // Per-participant `fanoutPerSecond` only sees that generator's slice; the aggregate
-    // is recomposed from global room membership. Say which is which, so nobody divides
-    // two numbers measured differently.
+    opsSent: aggregate.opsSent,
+    sentOpsPerSecond: aggregate.sentOpsPerSecond,
+    targetOpsPerSecond: aggregate.targetOpsPerSecond,
+    targetRateAchievement: aggregate.targetRateAchievement,
+    membersPerRoom: aggregate.membersPerRoom,
+    roomDistribution: aggregate.roomDistribution,
+    perRoom: aggregate.perRoom,
+    fanoutOps: aggregate.fanoutOps,
+    fanoutPerSecond: aggregate.fanoutPerSecond,
+    broadcastReceived: aggregate.broadcastReceived,
+    broadcastReceivedPerSecond: aggregate.broadcastReceivedPerSecond,
+    receiveWindowMs: aggregate.receiveWindowMs,
+    broadcastReceiveBasis: aggregate.broadcastReceiveBasis,
+    // Derived from successful writes and actual connected global membership; the
+    // independently observed delivery count is `broadcastReceived`.
     fanoutBasis: 'global-room-membership',
     ackMs: aggregate.ackMs,
     broadcastMs: participants.length > 1 ? mergeBroadcast(perParticipant, aggregate) : (aggregate.broadcastMs ?? mergeBroadcast(perParticipant, aggregate)),
@@ -264,7 +320,7 @@ export async function runBench({ scenario, distribute = false, room = 'bench', l
       '本机数字只代表这台机器；多机分摊时每个参与者的数字只代表该参与者所在的主机。与 docs/05-performance.md 的实测口径对比时注意负载生成器与服务端是否在同一台机器上。',
   };
 
-  summary.scope = 'mirror 消息转发、房间隔离与文档共享实验；不代表官方 OT 行为或 SpreadJS 容量。';
+  summary.scope = 'mirror 框架负载实验，验证消息转发、房间隔离与文档共享。硬件评估必须使用真实 SpreadJS、官方协同服务和业务负载；当前 bench 尚未提供官方负载测试。';
   summary.outcome = benchOutcome(summary.ops, perParticipant.some((p) => p.cancelled));
   mkdirSync(REPORT_DIR, { recursive: true });
   const file = resolve(REPORT_DIR, `bench-${timestampForFile()}.json`);
@@ -278,7 +334,7 @@ export function renderBench(summary) {
   const lines = [];
   // Same sentence as the pre-run header, so "the line I saw" and "the line in the
   // result" are the same string (docs and logs can quote either).
-  lines.push(`[lab] 压测：${s.scenario.describe}（${describeModel(s.scenario.model)}）`);
+  lines.push(`[lab] mirror 框架负载实验：${s.scenario.describe}（目标编辑 ${s.scenario.model.opsPerSecond} 次/s · 推算投递 ${s.scenario.model.fanoutPerSecond} 条/s）`);
   lines.push(`[lab] 验证范围：${s.scope}`);
   lines.push(`[lab] 结果：${s.outcome.message}`);
   lines.push(`[lab] 写入：完成 ${s.ops.ok} / 失败 ${s.ops.failed}（成功率 ${(s.ops.successRate * 100).toFixed(1)}%）`);
@@ -289,9 +345,12 @@ export function renderBench(summary) {
     `[lab] 广播到达：p50 ${s.broadcastMs.p50}ms / p95 ${s.broadcastMs.p95}ms / p99 ${s.broadcastMs.p99}ms（样本 ${s.broadcastMs.samples}${s.broadcastMs.note ? `，${s.broadcastMs.note}` : ''}）`,
   );
   lines.push(
-    `[lab] 吞吐：${s.opsPerSecond} op/s，扇出 ${s.fanoutPerSecond} 条/秒（${s.durationSec}s` +
+    `[lab] 吞吐：成功 ${s.opsPerSecond} op/s，实际发送 ${s.sentOpsPerSecond} op/s，推算扇出 ${s.fanoutPerSecond} 条/秒（写入窗口 ${s.writingMs}ms` +
       `${s.fanoutBasis === 'global-room-membership' && s.participants.length > 1 ? '，扇出按全局房间成员重算' : ''}）`,
   );
+  lines.push(`[lab] 时间：连接 ${s.connectionMs}ms / 写入 ${s.writingMs}ms / 总计 ${s.elapsedMs}ms（${s.timingBasis}）`);
+  lines.push(`[lab] 目标发送速率：${s.targetOpsPerSecond} op/s；实际达成率 ${s.targetRateAchievement === null ? '—' : `${(s.targetRateAchievement * 100).toFixed(1)}%`}`);
+  lines.push(`[lab] 实测房间分布：${Object.entries(s.roomDistribution?.histogram ?? {}).map(([members, count]) => `${members} 人 × ${count} 房间`).join(' / ') || '—'}；广播实收 ${s.broadcastReceived ?? 0} 条`);
   if (s.participants.length > 1) {
     lines.push('[lab] 参与者：');
     for (const p of s.participants) {

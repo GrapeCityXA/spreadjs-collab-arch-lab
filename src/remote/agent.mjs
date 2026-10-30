@@ -47,7 +47,7 @@ import { LAB_ROOT } from '../lab/paths.mjs';
 import { isAlive } from '../lab/state.mjs';
 import { spawnBackground, killTree } from '../lab/proc.mjs';
 import { getJson, postJson, sleep, probeTcp, waitForJson, waitPortFree } from '../lab/ports.mjs';
-import { runLoad } from '../bench/load.mjs';
+import { createLoadGates, runLoad } from '../bench/load.mjs';
 
 /** Bounded outbound timeouts (DEV-CONTRACT §12). */
 const ATTACH_TIMEOUT_MS = 30_000;
@@ -682,6 +682,9 @@ function loadSnapshot() {
     startedAt: activeLoad.startedAt,
     elapsedMs: Date.now() - activeLoad.startedAt,
     progress: activeLoad.progress,
+    loadId: activeLoad.loadId,
+    ready: activeLoad.ready,
+    completed: activeLoad.completed,
   };
 }
 
@@ -706,7 +709,7 @@ async function statusBody() {
 }
 
 /** One load at a time; the agent is a load generator, not a scheduler. */
-async function runLoadRequest(body) {
+async function runLoadRequest(body, requestSignal) {
   if (activeLoad) {
     const busy = Object.assign(new Error('busy'), { status: 409, load: loadSnapshot() });
     throw busy;
@@ -728,14 +731,28 @@ async function runLoadRequest(body) {
     opIntervalMs: body?.opIntervalMs ?? 1_000,
     durationMs: body?.durationMs ?? 5_000,
     rooms: body?.rooms ?? 1,
+    totalUsers: body?.totalUsers,
+    totalRooms: body?.totalRooms,
+    userOffset: body?.userOffset ?? 0,
     roomPrefix: body?.roomPrefix ?? 'agent-load',
   };
   const controller = new AbortController();
-  activeLoad = { controller, startedAt: Date.now(), users: Number(options.users) || 0, progress: null, promise: null };
+  const abortRequest = () => controller.abort();
+  requestSignal?.addEventListener('abort', abortRequest, { once: true });
+  if (requestSignal?.aborted) controller.abort();
+  const gateTimeoutMs = Math.max(1000, Math.min(240_000, Number(body?.coordinationTimeoutMs) || 240_000));
+  const { startGate, finishGate } = createLoadGates({ durationMs: options.durationMs, coordinationTimeoutMs: gateTimeoutMs });
+  const load = { controller, startGate, finishGate, loadId: body?.loadId ?? null, ready: false, completed: false,
+    startedAt: Date.now(), users: Number(options.users) || 0, progress: null, promise: null };
+  activeLoad = load;
   try {
     const stats = await runLoad({
       ...options,
       signal: controller.signal,
+      ...(body?.coordinated ? {
+        waitForStart: async ({ signal }) => { load.ready = true; await startGate.wait({ signal }); },
+        waitForFinish: async ({ signal }) => { load.completed = true; await finishGate.wait({ signal }); },
+      } : {}),
       onProgress: (progress) => {
         if (activeLoad) activeLoad.progress = progress;
       },
@@ -746,6 +763,9 @@ async function runLoadRequest(body) {
     );
     return stats;
   } finally {
+    requestSignal?.removeEventListener('abort', abortRequest);
+    startGate.release();
+    finishGate.release();
     activeLoad = null;
   }
 }
@@ -754,10 +774,23 @@ function cancelLoad() {
   if (!activeLoad) return { ok: true, cancelled: false, detail: '没有正在运行的负载' };
   try {
     activeLoad.controller.abort();
+    activeLoad.startGate.release();
+    activeLoad.finishGate.release();
   } catch {
     /* already settled */
   }
   return { ok: true, cancelled: true };
+}
+
+function releaseLoadGate(body, phase) {
+  if (!activeLoad || activeLoad.loadId !== (body?.loadId ?? null)) {
+    throw Object.assign(new Error('没有匹配 loadId 的负载'), { status: 409 });
+  }
+  if (!(phase === 'start' ? activeLoad.ready : activeLoad.completed)) {
+    throw Object.assign(new Error(`负载尚未 ${phase === 'start' ? 'ready' : 'completed'}`), { status: 409 });
+  }
+  (phase === 'start' ? activeLoad.startGate : activeLoad.finishGate).release();
+  return { ok: true, loadId: activeLoad.loadId, phase };
 }
 
 // ------------------------------------------------------------------- HTTP plumbing
@@ -816,6 +849,8 @@ const ROUTES = {
   '/agent/detach': { methods: ['POST'], auth: true },
   '/agent/load': { methods: ['POST'], auth: true },
   '/agent/load/cancel': { methods: ['POST'], auth: true },
+  '/agent/load/start': { methods: ['POST'], auth: true },
+  '/agent/load/release': { methods: ['POST'], auth: true },
   '/agent/shutdown': { methods: ['POST'], auth: true },
 };
 
@@ -870,11 +905,26 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (url.pathname === '/agent/load' && req.method === 'POST') {
-      sendJson(res, 200, await runLoadRequest(body));
+      const request = new AbortController();
+      const disconnected = () => { if (!res.writableEnded) request.abort(); };
+      res.once('close', disconnected);
+      try {
+        sendJson(res, 200, await runLoadRequest(body, request.signal));
+      } finally {
+        res.removeListener('close', disconnected);
+      }
       return;
     }
     if (url.pathname === '/agent/load/cancel' && req.method === 'POST') {
       sendJson(res, 200, cancelLoad());
+      return;
+    }
+    if (url.pathname === '/agent/load/start' && req.method === 'POST') {
+      sendJson(res, 200, releaseLoadGate(body, 'start'));
+      return;
+    }
+    if (url.pathname === '/agent/load/release' && req.method === 'POST') {
+      sendJson(res, 200, releaseLoadGate(body, 'release'));
       return;
     }
     if (url.pathname === '/agent/shutdown' && req.method === 'POST') {

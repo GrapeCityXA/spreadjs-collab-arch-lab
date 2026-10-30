@@ -19,14 +19,15 @@
  *   splitUsers(totalUsers, participants)
  *   mergeLoadStats(statsList)
  */
-import { stats as ackStats } from '../bench/load.mjs';
+import { stats as ackStats, connectionBudgetMs, loadRates, roomDistribution } from '../bench/load.mjs';
 
 /** DEV-CONTRACT §12 timeouts. */
 export const ATTACH_TIMEOUT_MS = 30_000;
 export const DETACH_TIMEOUT_MS = 10_000;
 export const STATUS_TIMEOUT_MS = 3_000;
-/** `load` is allowed to take `durationMs + 30 s` (DEV-CONTRACT §12), no more. */
-export const LOAD_EXTRA_MS = 30_000;
+/** ACK/drain allowance, separate from bounded connection and coordination budgets. */
+export const LOAD_EXTRA_MS = 90_000;
+export const LOAD_COORDINATION_MS = 240_000;
 const LOAD_CANCEL_TIMEOUT_MS = 10_000;
 const SHUTDOWN_TIMEOUT_MS = 10_000;
 
@@ -71,12 +72,15 @@ function hostOf(agentUrl) {
  * One bounded JSON call. Throws RemoteAgentError for transport failures and any
  * non-2xx response; returns the parsed body otherwise.
  */
-async function requestJson(action, agentUrl, path, { method = 'GET', token, body, timeoutMs } = {}) {
+async function requestJson(action, agentUrl, path, { method = 'GET', token, body, timeoutMs, signal } = {}) {
   const base = normalizeAgentUrl(agentUrl);
   const url = `${base}${path}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const requestSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
   let response;
+  let text;
+  let abortBody;
   try {
     response = await fetch(url, {
       method,
@@ -86,21 +90,31 @@ async function requestJson(action, agentUrl, path, { method = 'GET', token, body
         ...(token ? { 'x-lab-token': token } : {}),
       },
       body: body === undefined ? undefined : JSON.stringify(body),
-      signal: controller.signal,
+      signal: requestSignal,
     });
+    const bodyAborted = new Promise((_, reject) => {
+      abortBody = () => reject(Object.assign(new Error('agent response body aborted'), { name: 'AbortError' }));
+      requestSignal.addEventListener('abort', abortBody, { once: true });
+      if (requestSignal.aborted) abortBody();
+    });
+    // Keep both the deadline and external cancellation alive through the body.
+    // The explicit race also bounds custom/mock fetch implementations whose text()
+    // ignores the request signal, rather than silently accepting an empty response.
+    text = await Promise.race([response.text(), bodyAborted]);
   } catch (err) {
-    const timedOut = err?.name === 'AbortError';
+    const timedOut = controller.signal.aborted;
+    const cancelled = signal?.aborted;
     throw new RemoteAgentError(
-      timedOut
+      cancelled ? `${action} 已取消：${url}` : timedOut
         ? `${action} 超时（>${timeoutMs}ms）：${url}。agent 可能卡在启动节点或 load 尚未结束；检查 agent 日志与网络。`
         : `${action} 无法连接 ${url}：${err?.message ?? err}。确认 agent 已启动、地址可从 controller 访问、防火墙放行。`,
       { action, agentUrl: base },
     );
   } finally {
     clearTimeout(timer);
+    if (abortBody) requestSignal.removeEventListener('abort', abortBody);
   }
 
-  const text = await response.text().catch(() => '');
   let payload = null;
   try {
     payload = text ? JSON.parse(text) : null;
@@ -204,18 +218,20 @@ export async function shutdownAgent(agentUrl, { token } = {}) {
  * (DEV-CONTRACT §12) — returned as-is so local and distributed numbers stay
  * comparable.
  */
-export async function startLoad(agentUrl, { token, ...loadOptions } = {}) {
+export async function startLoad(agentUrl, { token, signal, ...loadOptions } = {}) {
   const body = {};
-  for (const key of ['lbUrl', 'path', 'users', 'opIntervalMs', 'durationMs', 'rooms', 'roomPrefix']) {
+  for (const key of ['lbUrl', 'path', 'users', 'opIntervalMs', 'durationMs', 'rooms', 'totalUsers', 'totalRooms', 'userOffset', 'roomPrefix', 'coordinated', 'loadId', 'coordinationTimeoutMs']) {
     if (loadOptions[key] !== undefined) body[key] = loadOptions[key];
   }
   const durationMs = Number(body.durationMs ?? 0);
-  const timeoutMs = (Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0) + LOAD_EXTRA_MS;
+  const timeoutMs = (Number.isFinite(durationMs) ? Math.max(0, durationMs) : 0) + LOAD_EXTRA_MS +
+    connectionBudgetMs(body.users) + (body.coordinated ? 2 * LOAD_COORDINATION_MS : 0);
   const stats = await requestJson('agent load', agentUrl, '/agent/load', {
     method: 'POST',
     token,
     body,
     timeoutMs,
+    signal,
   });
   if (!stats || typeof stats !== 'object') {
     throw new RemoteAgentError(`agent load 没有返回 stats 对象`, {
@@ -237,13 +253,67 @@ export async function cancelLoad(agentUrl, { token } = {}) {
   });
 }
 
+export async function startPreparedLoad(agentUrl, { token, loadId } = {}) {
+  return requestJson('start prepared agent load', agentUrl, '/agent/load/start', {
+    method: 'POST', token, body: { loadId }, timeoutMs: STATUS_TIMEOUT_MS,
+  });
+}
+
+export async function releaseLoad(agentUrl, { token, loadId } = {}) {
+  return requestJson('release completed agent load', agentUrl, '/agent/load/release', {
+    method: 'POST', token, body: { loadId }, timeoutMs: STATUS_TIMEOUT_MS,
+  });
+}
+
+/**
+ * Two barriers without cross-host clocks: all sockets ready → start; all writers
+ * completed → release sockets. Any failure cancels everyone, including gate waiters.
+ * Hooks are injectable so the exact coordination path is testable without listeners.
+ */
+export async function coordinateLoads(participants, hooks, { timeoutMs = LOAD_COORDINATION_MS, completedTimeoutMs = timeoutMs, pollMs = 50 } = {}) {
+  let failure;
+  const states = participants.map(() => ({ settled: false, result: null }));
+  const jobs = participants.map((participant, index) => Promise.resolve().then(() => hooks.launch(participant, index)).then(
+    (result) => { states[index] = { settled: true, result }; return result; },
+    (error) => { failure ??= error; throw error; },
+  ));
+  // Attach rejection handlers before any polling can throw, preventing unhandled jobs.
+  const settled = Promise.allSettled(jobs);
+  async function barrier(phase) {
+    const budget = phase === 'completed' ? completedTimeoutMs : timeoutMs;
+    const deadline = Date.now() + budget;
+    while (true) {
+      if (failure) throw failure;
+      const reports = await Promise.all(participants.map((participant, index) => hooks[phase](participant, index)));
+      if (failure) throw failure;
+      for (let index = 0; index < states.length; index++) {
+        if (states[index].settled) throw new Error(`负载参与者 ${index} 在 ${phase} 屏障释放前结束`);
+      }
+      if (reports.every(Boolean)) return;
+      if (Date.now() >= deadline) throw Object.assign(new Error(`负载协调 ${phase} 超出 ${budget}ms`), { code: 'LOAD_COORDINATION_TIMEOUT' });
+      await new Promise((resolve) => setTimeout(resolve, pollMs));
+    }
+  }
+  try {
+    await barrier('ready');
+    await Promise.all(participants.map((participant, index) => hooks.start(participant, index)));
+    await barrier('completed');
+    await Promise.all(participants.map((participant, index) => hooks.release(participant, index)));
+    return await Promise.all(jobs);
+  } catch (error) {
+    await Promise.allSettled(participants.map((participant, index) => hooks.cancel(participant, index)));
+    await settled;
+    throw error;
+  }
+}
+
 /**
  * Split `totalUsers` evenly across participants; the remainder goes to the earlier
  * entries (so 10 users / 3 participants = 4,3,3 — never 3,3,4).
  *
  * Participants may be given as `'local'`, `'http://h1:9100'` or `{kind, target}`.
  *
- * @returns {{kind: 'local'|'agent', target: string, users: number}[]}
+ * @returns {{kind: 'local'|'agent', target: string, users: number, userOffset: number}[]}
  */
 export function splitUsers(totalUsers, participants = []) {
   const total = Number(totalUsers);
@@ -254,18 +324,15 @@ export function splitUsers(totalUsers, participants = []) {
   if (!list.length) {
     throw new Error('splitUsers needs at least one participant ("local" and/or http://<agent>:<port>)');
   }
-  if (list.length > total) {
-    throw new Error(
-      `参与者数量 ${list.length} 不能多于用户数 ${total}：多出来的参与者会分到 0 个用户，不会被启动。`,
-    );
-  }
   const base = Math.floor(total / list.length);
   const remainder = total % list.length;
-  return list.map((participant, index) => ({
-    kind: participant.kind,
-    target: participant.target,
-    users: base + (index < remainder ? 1 : 0),
-  }));
+  let userOffset = 0;
+  return list.map((participant, index) => {
+    const users = base + (index < remainder ? 1 : 0);
+    const slice = { kind: participant.kind, target: participant.target, users, userOffset };
+    userOffset += users;
+    return slice;
+  });
 }
 
 function normalizeParticipant(participant) {
@@ -290,23 +357,35 @@ function normalizeParticipant(participant) {
 /**
  * Merge per-participant load stats into one aggregate for the report.
  *
- * Percentiles come from the concatenated `ackSamples` arrays (weighted by how many
- * ACK samples each participant contributed) — averaging p95 values across machines
- * would understate the tail whenever participants have different sample counts.
- * Runs are parallel, so the wall-clock `elapsedMs` is the slowest participant, and
- * per-second rates are computed on that shared window. `perNode` is summed.
+ * Percentiles estimate the concatenated retained `ackSamples`, capped per generator.
+ * They are neither averaged percentiles nor a percentile weighted by total successful
+ * operations. The report must not present them as an exact global ACK distribution.
+ * Rates are normalized to the longest participant WRITING window; connection time
+ * is separate. This avoids comparing wall clocks across hosts or assuming that
+ * sequential socket setup finished at the same instant on every generator.
  */
 export function mergeLoadStats(statsList = []) {
   const list = (Array.isArray(statsList) ? statsList : []).filter((stat) => stat && typeof stat === 'object');
   const sum = (pick) => list.reduce((total, stat) => total + (Number(pick(stat)) || 0), 0);
 
   const users = sum((stat) => stat.users);
+  const requestedUsers = sum((stat) => stat.requestedUsers ?? stat.users);
   const ops = sum((stat) => stat.ops);
   // `runLoad` currently reports failed acks as `opsFailed`; accept both so the
   // aggregate keeps its contract field name (`errors`) whichever lands.
   const errors = sum((stat) => stat.errors ?? stat.opsFailed);
+  const opsSent = sum((stat) => stat.opsSent ?? ((Number(stat.ops) || 0) + (Number(stat.errors ?? stat.opsFailed) || 0)));
   const elapsedMs = list.reduce((max, stat) => Math.max(max, Number(stat.elapsedMs) || 0), 0);
-  const elapsedSec = Math.max(elapsedMs, 1) / 1000;
+  const connectionMs = list.reduce((max, stat) => Math.max(max, Number(stat.connectionMs) || 0), 0);
+  // Older agents lack writingMs; preserve compatibility but expose that fallback.
+  const writingMs = list.reduce((max, stat) => Math.max(max, Number(stat.writingMs ?? stat.elapsedMs) || 0), 0);
+  const targetOpsPerSecond = sum((stat) => stat.targetOpsPerSecond ?? ((Number(stat.requestedUsers ?? stat.users) || 0) * 1000 / (Number(stat.opIntervalMs) || 1000)));
+  const rooms = list.reduce((max, stat) => Math.max(max, stat.membersPerRoom?.length ?? 0, stat.perRoom?.length ?? 0), 0);
+  const membersPerRoom = Array.from({ length: rooms }, (_, room) => sum((stat) => stat.membersPerRoom?.[room]));
+  const perRoom = Array.from({ length: rooms }, (_, room) => sum((stat) => stat.perRoom?.[room]));
+  const fanoutOps = perRoom.reduce((total, writes, room) => total + writes * Math.max(0, membersPerRoom[room] - 1), 0);
+  const broadcastReceived = sum((stat) => stat.broadcastReceived);
+  const receiveWindowMs = list.reduce((max, stat) => Math.max(max, Number(stat.receiveWindowMs) || 0), 0);
 
   const samples = [];
   for (const stat of list) {
@@ -326,12 +405,30 @@ export function mergeLoadStats(statsList = []) {
 
   return {
     users,
+    requestedUsers,
     ops,
+    opsSent,
     elapsedMs,
-    opsPerSecond: Number((ops / elapsedSec).toFixed(2)),
-    fanoutPerSecond: Number(sum((stat) => stat.fanoutPerSecond).toFixed(0)),
+    connectionMs,
+    writingMs,
+    timingBasis: list.every((stat) => Number.isFinite(stat.writingMs) &&
+      (stat.writingMs > 0 || (stat.writingMs === 0 && stat.skipped === true && stat.users === 0)) &&
+      !String(stat.timingBasis ?? '').includes('legacy')) ? 'longest-participant-writing-window' : 'legacy-elapsed-fallback',
+    rooms,
+    membersPerRoom,
+    roomDistribution: roomDistribution(membersPerRoom),
+    perRoom,
+    fanoutOps,
+    fanoutBasis: 'global-room-membership',
+    broadcastReceived,
+    ...loadRates({ ops, opsSent, writingMs, targetOpsPerSecond, fanoutOps, broadcastReceived }),
+    receiveWindowMs,
+    broadcastReceiveBasis: 'longest-participant-ready-through-release-window',
+    broadcastReceivedPerSecond: receiveWindowMs > 0 ? Number((broadcastReceived * 1000 / receiveWindowMs).toFixed(2)) : 0,
     errors,
-    ackMs: ackStats(samples),
+    opsFailed: errors,
+    cancelled: list.some((stat) => stat.cancelled),
+    ackMs: { ...ackStats(samples), note: '参与者保留样本合并的分位估计，非按全部成功操作数加权' },
     perNode,
     participants: list.length,
   };

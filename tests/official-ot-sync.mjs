@@ -5,9 +5,10 @@
  * Why a separate script: the official collaboration server validates a
  * machine-bound server license and the official client only runs in a real browser,
  * so this path cannot be part of the zero-license `self-test`. What this script
- * proves is the part the mirror engine cannot: that the lab can drive
- * `@grapecity-software/js-collaboration` + its OT/presence stack, and that two real
- * browsers editing the same SpreadJS workbook through it stay in sync.
+ * checks is the part the mirror engine cannot: that the lab can drive
+ * `@grapecity-software/js-collaboration` + its OT stack, and that two browser pages
+ * editing the same SpreadJS workbook through it stay in sync. The optional page
+ * does not enable client presence; this script does not verify presence or capacity.
  *
  * Requirements:
  *   - `server.serverLicenseKey` configured (config/license.json or SJS_LICENSE_FILE)
@@ -15,7 +16,7 @@
  *   - `npm run build:official` to have produced public/official/bundle.js
  *
  * Usage:
- *   npm run test:official                 # 1 node, official OT + presence
+ *   npm run test:official                   # 1 node, official OT sync
  *   npm run test:official -- --mode=shared   # 3 nodes + Redis + shared OT store
  */
 import { spawn } from 'node:child_process';
@@ -32,13 +33,12 @@ import { resolveLicense } from '../src/server/config.mjs';
 const BASE_PORT = 9556;
 const READY_TIMEOUT_MS = 60_000;
 const SYNC_TIMEOUT_MS = 20_000;
-const SETTLE_MS = 1200;
 
 const args = process.argv.slice(2);
 const mode = args.find((a) => a.startsWith('--mode='))?.split('=')[1] ?? 'single';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const results = { assertions: [], mode, startedAt: new Date().toISOString() };
+const results = { assertions: [], mode, scope: 'official-ot-functional-sync', presenceTested: false, startedAt: new Date().toISOString() };
 
 function assert(name, ok, detail) {
   results.assertions.push({ name, ok: Boolean(ok), detail });
@@ -127,8 +127,27 @@ async function waitForCell(cdp, row, col, expected) {
   return last;
 }
 
+function advancedAndConverged(versions, before) {
+  return versions.length === before.length && versions.length > 0 &&
+    versions.every((version, index) => Number.isSafeInteger(version) && version > before[index] && version === versions[0]);
+}
+
+async function waitForVersions(clients, before) {
+  const deadline = Date.now() + SYNC_TIMEOUT_MS;
+  let versions = [];
+  while (Date.now() < deadline) {
+    // Read the documented SharedDoc getter, rather than the page hook that starts
+    // at zero and is refreshed by a separate 500ms UI timer.
+    versions = await Promise.all(clients.map(({ cdp }) => cdp.evaluate('window.__doc?.version ?? null').catch(() => null)));
+    if (advancedAndConverged(versions, before)) return versions;
+    await sleep(300);
+  }
+  return versions;
+}
+
 async function main() {
   process.stdout.write('\n=== 官方实现（impl=real）端到端验证 ===\n');
+  process.stdout.write('  范围：官方 OT 双端功能同步；不验证客户端 presence、容量或高可用。\n');
   const config = loadLabConfig();
 
   let license;
@@ -187,7 +206,6 @@ async function main() {
       healthRows.map((r) => `:${r.port}=${r.health?.impl}`).join(' '),
     );
     assert('官方 OT 已启用', healthRows.every((row) => row.health?.otEnabled === true), JSON.stringify(healthRows[0]?.health ?? {}));
-    assert('presence 已启用', healthRows.every((row) => row.health?.presenceEnabled === true));
 
     const webPort = state.web?.port ?? config.webPort;
     const endpoint = state.lb ? `http://127.0.0.1:${state.lb.port}` : `http://127.0.0.1:${state.nodes[0].port}`;
@@ -253,10 +271,17 @@ async function main() {
       throw new Error('客户端页面没有就绪');
     }
 
-    // ---- presence ---------------------------------------------------------------
-    await sleep(SETTLE_MS);
-    const members = await clients[0].cdp.evaluate('Array.isArray(window.__labMembers) ? window.__labMembers.length : -1');
-    assert('presence 至少看到 2 个成员', Number(members) >= 2, `members=${members}`);
+    // The optional official page intentionally leaves __labMembers empty because
+    // it does not enable client presence. Check its actual OT document instead.
+    const docStates = await Promise.all(clients.map(({ cdp }) => cdp.evaluate(`(() => {
+      const doc = window.__doc;
+      return { id: doc?.id ?? null, type: doc?.type?.uri ?? null, version: doc?.version ?? null };
+    })()`).catch(() => null)));
+    const docsReady = assert('两个客户端已绑定同一官方 OT 文档', docStates.every((doc) =>
+      doc?.id === room && typeof doc.type === 'string' && doc.type.length > 0 &&
+      doc.type === docStates[0]?.type && Number.isSafeInteger(doc.version) && doc.version >= 0), JSON.stringify(docStates));
+    if (!docsReady) throw new Error('客户端 OT 文档状态无效');
+    const beforeVersions = docStates.map((doc) => doc.version);
 
     // ---- real OT sync both directions ------------------------------------------
     const fromAlice = `official-alice-${Date.now()}`;
@@ -269,8 +294,9 @@ async function main() {
     const readByAlice = await waitForCell(clients[0].cdp, 3, 3, fromBob);
     assert('bob 的编辑经官方 OT 同步到 alice', readByAlice === fromBob, `alice 读到 "${readByAlice}"`);
 
-    const docVersion = await clients[0].cdp.evaluate('window.__labVersion ?? null');
-    assert('客户端拿到文档版本号', docVersion !== null, `version=${docVersion}`);
+    const versions = await waitForVersions(clients, beforeVersions);
+    assert('双向编辑后两端 OT 版本推进并收敛', advancedAndConverged(versions, beforeVersions),
+      `before=${JSON.stringify(beforeVersions)} after=${JSON.stringify(versions)}`);
   } catch (err) {
     results.error = err.message;
     process.stdout.write(`\n  ERROR: ${err.message}\n`);
@@ -302,8 +328,7 @@ async function main() {
   } catch {
     /* ignore */
   }
-  if (!results.error && passed === total) process.exitCode = 0;
-  else if (!results.error) process.exitCode = 1;
+  process.exitCode = !results.error && passed === total ? 0 : 1;
 }
 
 main().catch((err) => {

@@ -11,7 +11,7 @@ import { MODES, VARIANTS, expectations } from '../lab/modes.mjs';
 import { readState } from '../lab/state.mjs';
 import { loadLabConfig } from '../lab/paths.mjs';
 import { getJson } from '../lab/ports.mjs';
-import { CHECK_DEFAULTS, describeScenario, formatCores, modelScenario, normalizeScenario } from '../lab/scenario.mjs';
+import { CHECK_DEFAULTS, describeScenario, modelScenario, normalizeScenario } from '../lab/scenario.mjs';
 import { runLoad } from '../bench/load.mjs';
 import { runMirrorProbes } from './probes.mjs';
 import { writeReport } from './report.mjs';
@@ -300,22 +300,35 @@ export async function runCheck({ stack = readState(), onProgress, persist = true
       detail:
         `${loadUsers} 个客户端${capped ? `（场景 ${sc.users}，按上限收敛）` : ''} · ` +
         `${load.ops} 次编辑成功 / ${load.opsFailed} 失败 · ` +
-        `ACK p95 ${ack.p95 ?? '—'}ms · 实测扇出 ${load.fanoutPerSecond} 条/s · ` +
-        `模型预测 ${formatCores(model.predictedCores)} 核`,
+        `ACK p95 ${ack.p95 ?? '—'}ms · 推算投递量 ${load.fanoutPerSecond} 条/s`,
       metrics: {
         clients: loadUsers,
         requestedUsers: sc.users,
         capped,
         ops: load.ops,
         opsFailed: load.opsFailed,
+        opsSent: load.opsSent,
         opsPerSecond: load.opsPerSecond,
+        sentOpsPerSecond: load.sentOpsPerSecond,
+        targetOpsPerSecond: load.targetOpsPerSecond,
+        targetRateAchievement: load.targetRateAchievement,
         fanoutPerSecond: load.fanoutPerSecond,
+        fanoutBasis: load.fanoutBasis,
+        broadcastReceived: load.broadcastReceived,
+        broadcastReceivedPerSecond: load.broadcastReceivedPerSecond,
+        receiveWindowMs: load.receiveWindowMs,
+        broadcastReceiveBasis: load.broadcastReceiveBasis,
+        membersPerRoom: load.membersPerRoom,
+        roomDistribution: load.roomDistribution,
         ack,
         broadcastMs: load.broadcastMs,
         predictedCores: model.predictedCores,
         modelOpsPerSecond: model.opsPerSecond,
         modelFanoutPerSecond: model.fanoutPerSecond,
         elapsedMs: load.elapsedMs || Date.now() - loadStarted,
+        connectionMs: load.connectionMs,
+        writingMs: load.writingMs,
+        timingBasis: load.timingBasis,
       },
     };
     raw.push(loadItem);
@@ -350,6 +363,21 @@ export async function runCheck({ stack = readState(), onProgress, persist = true
             opsFailed: loadItem.metrics.opsFailed,
             opsPerSecond: loadItem.metrics.opsPerSecond,
             fanoutPerSecond: loadItem.metrics.fanoutPerSecond,
+            fanoutBasis: loadItem.metrics.fanoutBasis,
+            opsSent: loadItem.metrics.opsSent,
+            sentOpsPerSecond: loadItem.metrics.sentOpsPerSecond,
+            targetOpsPerSecond: loadItem.metrics.targetOpsPerSecond,
+            targetRateAchievement: loadItem.metrics.targetRateAchievement,
+            broadcastReceived: loadItem.metrics.broadcastReceived,
+            broadcastReceivedPerSecond: loadItem.metrics.broadcastReceivedPerSecond,
+            receiveWindowMs: loadItem.metrics.receiveWindowMs,
+            broadcastReceiveBasis: loadItem.metrics.broadcastReceiveBasis,
+            membersPerRoom: loadItem.metrics.membersPerRoom,
+            roomDistribution: loadItem.metrics.roomDistribution,
+            connectionMs: loadItem.metrics.connectionMs,
+            writingMs: loadItem.metrics.writingMs,
+            elapsedMs: loadItem.metrics.elapsedMs,
+            timingBasis: loadItem.metrics.timingBasis,
             ackMs: loadItem.metrics.ack,
           }
         : null,

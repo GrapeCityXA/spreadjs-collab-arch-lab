@@ -991,7 +991,7 @@
     var runScenario = $('runCheckScenarioBtn');
     if (runScenario) runScenario.textContent = busy === 'check' ? '体检进行中…' : '运行架构体检';
     var bench = $('benchRunBtn');
-    if (bench) bench.textContent = busy === 'bench' ? '压测进行中…' : '压测（按场景）';
+    if (bench) bench.textContent = busy === 'bench' ? 'mirror 实验进行中…' : 'mirror 框架负载实验';
   }
 
   function renderCheckIdle() {
@@ -1296,12 +1296,19 @@
 
   /** DEV-CONTRACT §11 — the same formula as src/lab/scenario.mjs (modelScenario). */
   function computeScenarioModel(scenario) {
-    var usersPerRoom = Math.ceil(scenario.users / Math.max(1, scenario.rooms));
+    var rooms = Math.max(1, scenario.rooms);
+    var usersPerRoom = scenario.users / rooms;
+    var base = Math.floor(usersPerRoom);
+    var extra = scenario.users % rooms;
     var opsPerSecond = scenario.users / (scenario.opIntervalMs / 1000);
-    var fanoutPerSecond = opsPerSecond * Math.max(usersPerRoom - 1, 0);
-    var predictedCores = fanoutPerSecond / CORES_PER_FANOUT;
+    var fanoutPerSecond = (extra * (base + 1) * base + (rooms - extra) * base * (base - 1)) /
+      (scenario.opIntervalMs / 1000);
+    var presence = Boolean(state.stack && state.stack.config && state.stack.config.presence);
+    var predictedCores = fanoutPerSecond / CORES_PER_FANOUT * (presence ? 1.17 : 1);
     return {
       usersPerRoom: usersPerRoom,
+      usersPerRoomMin: base,
+      usersPerRoomMax: base + (extra > 0 ? 1 : 0),
       opsPerSecond: opsPerSecond,
       fanoutPerSecond: fanoutPerSecond,
       predictedCores: predictedCores,
@@ -1384,21 +1391,20 @@
     }
     var model = computeScenarioModel(scenario);
     clearNode(host);
-    host.appendChild(document.createTextNode('≈ '));
+    host.appendChild(document.createTextNode('目标编辑 '));
     host.appendChild(h('b', { text: fmtRate(model.opsPerSecond) }));
-    host.appendChild(document.createTextNode(' 次编辑/s · 扇出 '));
+    host.appendChild(document.createTextNode(' 次/s · 推算投递 '));
     host.appendChild(h('b', { text: fmtInt(model.fanoutPerSecond) }));
-    host.appendChild(document.createTextNode(' 条/s · 模型预测 '));
-    host.appendChild(h('b', { text: fmtCores(model.predictedCores) }));
-    host.appendChild(document.createTextNode(' 核'));
-    host.appendChild(h('span', { class: 'muted', text: '（每房间 ≈ ' + fmtInt(model.usersPerRoom) + ' 用户）' }));
+    host.appendChild(document.createTextNode(' 条/s'));
+    host.appendChild(h('span', { class: 'muted', text: '（均匀分配每房间 ' + model.usersPerRoomMin +
+      (model.usersPerRoomMax !== model.usersPerRoomMin ? '–' + model.usersPerRoomMax : '') + ' 用户）' }));
 
     var note = $('scenarioNote');
     if (note) {
       clearNode(note);
       note.appendChild(document.createTextNode(
         '体检会先跑 11 个正确性探针，再用 min(用户数, 服务端上限) 个客户端跑一次短负载（实测 p95）；' +
-        '「压测」按同一场景跑满 ' + secondsText(scenario.durationMs) + ' 秒。'));
+        '「mirror 框架负载实验」按同一场景生成合成写入 ' + secondsText(scenario.durationMs) + ' 秒。投递量只反映消息数量，不是资源测量；零广播仍需资源。'));
       if (!scenarioCatalogue().available) {
         note.appendChild(document.createTextNode(' 服务端 /api/catalogue 没有 scenario 配置，正在使用契约默认值。'));
       }
@@ -1418,16 +1424,16 @@
     line.appendChild(document.createTextNode('实测：'));
     line.appendChild(h('b', { text: fmtInt(load.clients) + ' 客户端' }));
     if (load.capped) {
-      line.appendChild(document.createTextNode('（已按客户端上限收敛，其余按模型推算）'));
+      line.appendChild(document.createTextNode('（实际只测试上限内的客户端，其余用户未执行负载）'));
     }
-    line.appendChild(document.createTextNode(' · ' + fmtRate(load.opsPerSecond) + ' 次编辑/s · 扇出 ' +
+    line.appendChild(document.createTextNode(' · ' + fmtRate(load.opsPerSecond) + ' 次编辑/s · 推算投递量 ' +
       fmtInt(load.fanoutPerSecond) + ' 条/s'));
     if (ack.p95 !== undefined) {
       line.appendChild(document.createTextNode(' · '));
       line.appendChild(h('b', { text: 'ACK p95 ' + text(ack.p95) + 'ms' }));
     }
     if (model) {
-      line.appendChild(document.createTextNode('（模型预测 ' + fmtCores(model.predictedCores) + ' 核 / 扇出 ' +
+      line.appendChild(document.createTextNode('（场景目标编辑 ' + fmtRate(model.opsPerSecond) + ' 次/s · 推算投递 ' +
         fmtInt(model.fanoutPerSecond) + ' 条/s）'));
     }
     return line;
@@ -1452,9 +1458,8 @@
     card.appendChild(h('div', { class: 'kicker', text: '本次场景' }));
     card.appendChild(h('div', { class: 'scene-line', text: scenarioLine(scenario) }));
     card.appendChild(h('div', { class: 'model-line' }));
-    card.lastChild.appendChild(document.createTextNode('模型：每房间 ≈ ' + fmtInt(model.usersPerRoom) +
-      ' 用户 · ≈' + fmtRate(model.opsPerSecond) + ' 次编辑/s · 扇出 ' + fmtInt(model.fanoutPerSecond) +
-      ' 条/s · 预测 ' + fmtCores(model.predictedCores) + ' 核'));
+    card.lastChild.appendChild(document.createTextNode('mirror 场景：平均每房间 ' + fmtRate(model.usersPerRoom) +
+      ' 用户 · 目标编辑 ' + fmtRate(model.opsPerSecond) + ' 次/s · 推算投递 ' + fmtInt(model.fanoutPerSecond) + ' 条/s'));
     if (load) card.appendChild(renderMeasuredLoad(load, model));
     host.appendChild(card);
   }
@@ -1617,10 +1622,10 @@
     var card = h('div', { class: 'card bench-card' });
     var head = h('div', { class: 'bench-head' }, [
       h('div', {}, [
-        h('div', { class: 'scenario-title', text: '压测（按场景）' }),
+        h('div', { class: 'scenario-title', text: 'mirror 框架负载实验' }),
         h('div', { class: 'scenario-sub', text: scenarioLine(scenario) }),
       ]),
-      badge('压测进行中', 'info'),
+      badge('mirror 实验进行中', 'info'),
     ]);
     card.appendChild(head);
     var progress = h('div', { class: 'check-running' });
@@ -1643,7 +1648,7 @@
     card.appendChild(h('div', { class: 'bench-unsupported' }));
     card.lastChild.appendChild(h('b', { text: '当前服务端还没有 /api/bench（或该端点不可用）。' }));
     card.lastChild.appendChild(document.createTextNode(
-      ' 等 src/web/server.mjs 升级后，用同一个「压测（按场景）」按钮重试；现在可以先用 CLI：npm run bench -- --users=… --interval=…'));
+      ' 更新服务端后，用「mirror 框架负载实验」按钮重试；也可用 CLI：npm run bench -- --users=… --interval=…'));
     if (err) card.appendChild(h('div', { class: 'bench-note', text: errorText(err) }));
     host.appendChild(card);
   }
@@ -1745,7 +1750,7 @@
 
     var head = h('div', { class: 'bench-head' });
     var left = h('div');
-    var title = h('div', { class: 'scenario-title', text: '压测结果' });
+    var title = h('div', { class: 'scenario-title', text: 'mirror 框架负载实验结果' });
     left.appendChild(title);
     if (scenario) left.appendChild(h('div', { class: 'scenario-sub', text: scenarioLine(scenario) }));
     else if (stats.scenario) left.appendChild(h('div', { class: 'scenario-sub', text: scenarioLine(stats.scenario) }));
@@ -1753,7 +1758,7 @@
     var writesPassed = stats.outcome ? stats.outcome.writesPassed : false;
     head.appendChild(badge(writesPassed ? '负载完成' : '结果需检查', writesPassed ? 'ok' : 'err'));
     card.appendChild(head);
-    card.appendChild(h('div', { class: 'bench-note', text: stats.scope || 'mirror 演示结果，不代表官方 OT 行为或 SpreadJS 容量。' }));
+    card.appendChild(h('div', { class: 'bench-note', text: stats.scope || 'mirror 框架负载实验；硬件评估必须使用真实 SpreadJS、官方协同服务和业务负载。当前 bench 尚未提供官方负载测试。' }));
     if (stats.outcome) card.appendChild(h('div', { class: 'bench-note', text: stats.outcome.message }));
 
     var kpis = h('div', { class: 'bench-kpis' });
@@ -1761,7 +1766,7 @@
       ['用户', fmtInt(benchUsers(stats))],
       ['总 ops', fmtInt(stats.ops && typeof stats.ops === 'object' ? stats.ops.ok : stats.ops)],
       ['ops/s', fmtRate(stats.opsPerSecond)],
-      ['扇出/s', fmtInt(stats.fanoutPerSecond)],
+      ['推算投递/s', fmtInt(stats.fanoutPerSecond)],
       ['ACK p95', text(ack.p95) + ' ms'],
       ['错误', text(benchFailureCount(stats))],
     ].forEach(function (entry) {
@@ -1774,14 +1779,28 @@
     var participantRows = benchParticipants(stats);
     var remoteCount = participantRows.filter(function (p) { return p.kind === 'agent'; }).length;
     if (participantRows.length > 1 || remoteCount > 0) {
-      card.appendChild(h('div', { class: 'bench-note', text: '参与者：本机 + ' + remoteCount + ' 个 agent；聚合 ops = 各参与者之和，ACK 分位数按样本合并。' }));
+      card.appendChild(h('div', { class: 'bench-note', text: '参与者：' + (participantRows.some(function (p) { return p.kind === 'local'; }) ? '本机 + ' : '') + remoteCount + ' 个 agent；聚合 ops = 各参与者之和，ACK 分位数由各参与者保留样本合并估计。' }));
     } else {
       card.appendChild(h('div', { class: 'bench-note', text: '本次仅本机执行（distribute=false）。跨机压测：先把 agent 加入下一次启动，再勾选「跨机分摊」。' }));
     }
     if (stats.broadcastMs && stats.broadcastMs.p95 !== undefined) {
-      card.appendChild(h('div', { class: 'bench-note', text: '广播延迟 p95 ' + text(stats.broadcastMs.p95) + ' ms（fanout 投递时间，来自负载实现）。' }));
+      card.appendChild(h('div', { class: 'bench-note', text: '广播延迟 p95 ' + text(stats.broadcastMs.p95) + ' ms（接收端记录的到达样本）。' }));
     }
-    if (stats.elapsedMs !== undefined) card.appendChild(h('div', { class: 'bench-note', text: '实测时长 ' + Math.round(stats.elapsedMs / 1000) + ' 秒。' }));
+    if (stats.writingMs !== undefined && stats.timingBasis !== 'legacy-elapsed-fallback') {
+      card.appendChild(h('div', { class: 'bench-note', text: '连接窗口 ' + secondsText(stats.connectionMs) +
+        ' 秒 · 写入窗口 ' + secondsText(stats.writingMs) + ' 秒；速率以写入窗口计算。' }));
+      card.appendChild(h('div', { class: 'bench-note', text: '发送 ' + fmtRate(stats.sentOpsPerSecond) +
+        ' 次/s，目标 ' + fmtRate(stats.targetOpsPerSecond) + ' 次/s，发送速率达成 ' +
+        fmtRate(stats.targetRateAchievement * 100) + '%。投递量按成功写入与房间人数推算，不代表逐条收件确认。' }));
+    } else if (stats.elapsedMs !== undefined) {
+      card.appendChild(h('div', { class: 'bench-note', text: '旧报告总时长 ' + secondsText(stats.elapsedMs) +
+        ' 秒（含建连），请重测后比较写入速率。' }));
+    }
+    if (stats.roomDistribution) card.appendChild(h('div', { class: 'bench-note', text:
+      '已连接房间人数分布（人数:房间数）：' + JSON.stringify(stats.roomDistribution.histogram) }));
+    if (stats.receiveWindowMs !== undefined) card.appendChild(h('div', { class: 'bench-note', text:
+      '广播实收 ' + text(stats.broadcastReceived) + ' 条，接收窗口 ' + secondsText(stats.receiveWindowMs) +
+      ' 秒；接收率使用独立窗口，不能与推算投递率直接相减作为丢失率。' }));
     host.appendChild(card);
   }
 

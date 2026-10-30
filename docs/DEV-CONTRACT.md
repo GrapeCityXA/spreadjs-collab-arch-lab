@@ -24,6 +24,13 @@ independently without drifting.
   only `SET` / `MISSING`.
 - **The lab never pretends.** If a step is not verified in the current
   environment, the output says so (see `docs/04-architecture-check.md`).
+- **Separate framework tests from hardware assessment.** Mirror validates
+  orchestration, routing, forwarding and reporting. Hardware assessment requires
+  real SpreadJS workbooks, the official collaboration client/server and OT,
+  business operations, intended persistence and resource monitoring. Do not
+  convert mirror measurements into official-engine hardware requirements.
+  Keep historical CPU model fields in JSON for compatibility, but omit predicted
+  core counts from the main mirror CLI, Markdown and console results.
 
 ## 1. Directory ownership
 
@@ -436,11 +443,20 @@ scenarios.
 Derived model (`modelScenario`, the only formula in the code base):
 
 ```
-usersPerRoom     = ceil(users / rooms)            (last room can be smaller)
+usersPerRoom     = users / rooms                 (actual mean)
+q               = floor(users / rooms)
+r               = users % rooms                 (r rooms have q + 1 users)
 opsPerSecond     = users / (opIntervalMs / 1000)
-fanoutPerSecond  = opsPerSecond * (usersPerRoom - 1)   // one edit fans out to the room
+fanoutPerSecond  = (r * (q + 1) * q + (rooms - r) * q * (q - 1)) / (opIntervalMs / 1000)
 predictedCores   = fanoutPerSecond / 12700 * (presence ? 1.17 : 1)
 ```
+
+The model assumes a balanced distribution; real hot rooms require their own input.
+`usersPerRoomMin` / `usersPerRoomMax` describe the balanced room-size range. Keep
+model values unrounded until presentation and node-count arithmetic. The CPU number
+only models historical broadcast work: zero fan-out does not mean zero processing,
+memory, persistence, or network cost. Presence changes this CPU estimate, not the
+base edit-message delivery count.
 
 Rules:
 
@@ -453,8 +469,9 @@ Rules:
 - The load phase goes **through the topology entry** (the LB when the topology has one,
   otherwise the single node), i.e. the same path a browser takes.
 - New 12th check `load.scenario`, expectation `record` in **every** mode: status
-  `record`, `detail` carries measured p95, modelled fan-out and predicted cores. Advice
-  on high p95: lower users/interval, or generate load with `--distribute` on more hosts.
+  `record`, `detail` carries measured p95 and derived fan-out, without a core-count
+  prediction. Diagnose slow ACKs and generator/server resources before changing
+  the load; use `--distribute` when the generator is the limiting component.
 - `check` job progress may emit one extra entry `{id:'load.scenario', status:'running'}`
   before the load phase finishes; it is replaced by the final `record` entry. Console
   clients must tolerate both (same `id`, the later one wins).
@@ -463,9 +480,12 @@ Rules:
   and `compare` passes the same scenario to all three modes.
 - A report without an explicit scenario used the defaults — and still prints them.
 - Presentation rules (docs quote these strings, so they are contract): every CLI line
-  starts with `[lab] `, including `bench`'s pre-run `压测：`/`目标：`/`分摊：`; `check`
-  prints the scenario+model pair **once** before the run; a modelled core count below
-  0.01 prints `<0.01 核` (never `0 核`); `bench --distribute` recomputes aggregate
+  starts with `[lab] `, including `bench`'s pre-run `mirror 框架负载实验：`/`目标：`/`分摊：`;
+  `check` prints the scenario and target edit/derived delivery rates **once** before
+  the run. Main mirror outputs do not display predicted cores; retain the model in
+  compatible JSON and the separate historical `capacity` calculator. Only that
+  calculator formats a positive sub-0.01 core estimate as `<0.01 核`.
+  `bench --distribute` recomputes aggregate
   fan-out as `Σ_room (Σ_p ops[p][room]) × (Σ_p members[p][room] − 1)` and sets
   `fanoutBasis:'global-room-membership'` — per-participant `fanoutPerSecond` is only that
   generator's slice and must not be added up; the `多机取最差参与者` broadcast note appears
@@ -523,9 +543,11 @@ Agent HTTP (JSON; every `/agent/*` control endpoint requires `x-lab-token`):
 |---|---|
 | `POST /agent/attach` | `{lbUrl, token, nodePort?, nodeConfig?}` → `{ok, nodeUrl, nodeId, restarted}` — applies `nodeConfig` (restarting the node when it differs), waits for `/health`, registers `nodeUrl` in the LB |
 | `POST /agent/detach` | `{lbUrl, token}` → `{ok}` — deregisters `nodeUrl` and stops the node |
-| `POST /agent/load` | `{lbUrl, path, users, opIntervalMs, durationMs, rooms, roomPrefix}` → load stats; `409 {error:'busy'}` when a load is already running |
+| `POST /agent/load` | `{lbUrl, path, users, opIntervalMs, durationMs, rooms, totalUsers?, totalRooms?, userOffset?, roomPrefix, coordinated?, loadId?, coordinationTimeoutMs?}` → load stats; `409 {error:'busy'}` when a load is already running |
 | `POST /agent/load/cancel` | `{ok}` |
-| `GET /agent/status` | `{ok, host, nodePort, node:{…/health}, load:{running, users}}` |
+| `POST /agent/load/start` | `{loadId}` → `{ok, loadId, phase:'start'}`; releases a matching ready load, otherwise `409` |
+| `POST /agent/load/release` | `{loadId}` → `{ok, loadId, phase:'release'}`; releases a matching completed load, otherwise `409` |
+| `GET /agent/status` | `{ok, host, nodePort, node:{…/health}, load:{running, users, loadId?, ready?, completed?}}` |
 | `GET /health` | `{ok:true, role:'agent'}` (used by the controller's attach wait) |
 | `POST /agent/shutdown` | `{ok}`, then `process.exit(0)` |
 
@@ -533,11 +555,47 @@ Load stats — **one implementation** shared by the local load phase, `bench --d
 and the agent:
 
 ```js
-{ ok, users, elapsedMs, ops, opsPerSecond, fanoutPerSecond, errors,
+{ ok, users, requestedUsers, totalUsers, totalRooms, userOffset,
+  elapsedMs, connectionMs, writingMs, timingBasis,
+  startWaitMs, finishWaitMs, connectionBudgetMs,
+  receiveWindowMs, broadcastReceiveBasis,
+  ops, opsSent, opsFailed, opsPerSecond, sentOpsPerSecond,
+  targetOpsPerSecond, targetRateAchievement,
+  membersPerRoom, perRoom, roomDistribution: { rooms, occupiedRooms, histogram },
+  fanoutPerSecond, fanoutBasis, broadcastReceived, broadcastReceivedPerSecond,
   ackMs: { p50, p95, p99, max, samples },
   ackSamples: number[],            // capped at 500 for merging percentiles
   perNode: { [nodeId]: clients }, cancelled }
 ```
+
+`opsPerSecond` counts successful writes; `sentOpsPerSecond` counts attempts. Both
+divide by the writing window, excluding connection setup.
+`targetRateAchievement` is actual send rate / configured send rate (1 means 100%);
+it does not establish a server capacity limit. Distributed aggregation uses the
+longest participant writing window and labels that basis. Maximum connection,
+writing and elapsed windows can come from different participants and need not add
+up. Reports from older agents without `writingMs` explicitly use a legacy fallback.
+
+`fanoutPerSecond` is derived from successful writes and observed global room
+membership; it is not a complete recipient acknowledgment count. Actual `lab:op`
+frames observed by clients are counted separately in `broadcastReceived`, from
+local ready until the all-completed release. `receiveWindowMs` records that
+independent window; the receive rate divides by it, not by `writingMs`.
+This covers network skew in start signals and slower writers. These two rates
+cannot be subtracted to infer a loss rate; no per-message receipt/deduplication
+check is implied. ACK percentiles merge at most 500 retained samples from each
+participant; they describe those samples, not an operation-weighted global tail.
+
+Distributed loads use two barriers: wait until all participants have connected
+and joined their rooms, release writing, wait until all writers complete, then
+release connections. Faster participants retain their sockets until that final
+release. This preserves concurrent room membership without comparing host clocks;
+start signals still incur network skew. Any error cancels all participants and
+releases gate waiters. Disconnecting the load HTTP request aborts the agent load.
+ACK durations use one host's clock, but broadcast latency subtracts the sender's
+timestamp from the receiver's clock. Real cross-host latency measurements still
+require clock calibration and an explicit skew bound; the barriers do not remove
+that requirement.
 
 ### Load balancer admin API
 
@@ -562,6 +620,8 @@ status
 ```
 
 - `--agents` requires a load-balanced topology (`sharded`/`shared`); `single` refuses.
+  `--nodes=1` with agents keeps the LB and the mode's adapter/store settings;
+  `--nodes` counts local nodes, and one local plus remote nodes is still multi-node.
 - The controller generates (or accepts) one token, starts the LB with it, attaches every
   agent, records `state.remote[{agentUrl, nodeUrl, nodeId, host}]`. A failed attach
   fails `up` with exit 2 and an actionable message.
@@ -580,12 +640,23 @@ status
   participants (at most one local), runs them in parallel, then merges: total ops,
   weighted ack percentiles from `ackSamples`, summed `perNode`. The report embeds
   `distributed.participants`.
+- Each slice receives its global `userOffset`, `totalUsers` and `totalRooms`.
+  Room assignment is `floor(globalUserIndex * totalRooms / totalUsers)`; per-room
+  arrays retain global room indices even if a participant has no members in some
+  rooms. Adding generators must not change the requested global room distribution.
 
 ### Safety / bounded timeouts
 
 - `--public-host` is the address **as the LB sees it**; it must be reachable from the
   controller, not just from the agent itself.
-- Every remote call is bounded: attach 30 s, load `durationMs + 30 s`, detach 10 s.
+- Every remote call is bounded: attach 30 s, detach 10 s. Socket setup has concurrency
+  10 and a budget `min(180000, 30000 + users * 20)` ms. Load HTTP allows duration +
+  that budget + 90 s ACK/drain allowance, plus 480 s for coordinated gates. The
+  controller ready barrier is 240 s; its completed barrier is duration + 90 s.
+  Agent start gates default to 240 s (override `coordinationTimeoutMs`, clamped to
+  1–240 s); finish gates allow the load duration plus that allowance, so empty
+  slices can wait for a full 10-minute load without timing out early.
+  Timed-out/cancelled late connections are also closed.
 - An agent may only deregister the exact upstream URL it registered.
 - The token is never printed in reports or logs (show `SET`/`MISSING`, like licenses).
 

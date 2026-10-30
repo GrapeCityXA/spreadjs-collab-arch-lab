@@ -9,7 +9,6 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { REPORT_DIR } from '../lab/paths.mjs';
 import { MODES, VARIANTS } from '../lab/modes.mjs';
-import { formatCores } from '../lab/scenario.mjs';
 
 const STATUS_LABEL = {
   pass: '✅ PASS',
@@ -31,11 +30,14 @@ export function renderMarkdown(result) {
   const modeLabel = MODES[result.mode]?.label ?? result.mode;
   const variantLabel = result.variant ? VARIANTS[result.variant]?.label ?? result.variant : null;
   const lines = [];
-  lines.push(`# 协同架构体检报告`);
+  lines.push(`# mirror 架构体检报告`);
   lines.push('');
   lines.push(`- 时间：${result.generatedAt}`);
   lines.push(`- 拓扑：**${modeLabel}**${variantLabel ? `（变体：${variantLabel}）` : ''}`);
   lines.push(`- 实际配置：${result.describe ?? '—'}`);
+  lines.push(`- 引擎：${result.engine === 'mirror' ? 'mirror 演示协同协议' : '官方实现（real）'}`);
+  if (result.scope) lines.push(`- 验证范围：${result.scope}`);
+  if (result.engine === 'mirror') lines.push('- 硬件评估必须使用真实 SpreadJS、官方协同服务和业务负载；本报告只验证 mirror 框架行为。');
   const envInfo = result.environment ?? {};
   if (envInfo.remoteNodes) {
     lines.push(
@@ -46,19 +48,25 @@ export function renderMarkdown(result) {
     const m = result.scenario.model ?? {};
     lines.push(
       `- 场景：${result.scenario.describe ?? `${result.scenario.users} 用户`}` +
-        `（模型：≈ ${m.opsPerSecond ?? '—'} 次编辑/s · 扇出 ${m.fanoutPerSecond ?? '—'} 条/s · 预测 ${formatCores(m.predictedCores)} 核）`,
+        `（目标编辑 ${m.opsPerSecond ?? '—'} 次/s · 推算投递 ${m.fanoutPerSecond ?? '—'} 条/s）`,
     );
     if (result.scenario.load) {
       const load = result.scenario.load;
       lines.push(
         `- 场景实测：${load.clients} 客户端${load.capped ? '（按上限收敛）' : ''} · ` +
           `${load.ops} 次编辑 / ${load.opsFailed} 失败 · ACK p50 ${fmtMs(load.ackMs?.p50)} / p95 ${fmtMs(load.ackMs?.p95)} / p99 ${fmtMs(load.ackMs?.p99)} · ` +
-          `扇出 ${load.fanoutPerSecond} 条/s`,
+          `推算投递量 ${load.fanoutPerSecond} 条/s`,
       );
+      if (load.writingMs !== undefined && load.timingBasis !== 'legacy-elapsed-fallback') {
+        lines.push(`- 负载窗口：连接 ${load.connectionMs} ms · 写入 ${load.writingMs} ms · 发送 ${load.sentOpsPerSecond} 次/s · 目标发送速率达成 ${Number((load.targetRateAchievement * 100).toFixed(1))}%`);
+        lines.push('- 吞吐仅以写入窗口为分母；投递量由成功写入和已连接房间人数推算，不是逐条收件确认。');
+      } else if (load.elapsedMs !== undefined) {
+        lines.push(`- 旧统计口径：总窗口 ${load.elapsedMs} ms 包含建连，需重测后比较写入速率。`);
+      }
+      if (load.receiveWindowMs !== undefined) lines.push(`- 广播实收 ${load.broadcastReceived} 条，接收窗口 ${load.receiveWindowMs} ms；接收率按此独立窗口计算。`);
+      if (load.roomDistribution) lines.push(`- 已连接房间人数分布（人数:房间数）：${JSON.stringify(load.roomDistribution.histogram)}`);
     }
   }
-  lines.push(`- 引擎：${result.engine === 'mirror' ? '零授权参考实现（mirror）' : '官方实现（real）'}`);
-  if (result.scope) lines.push(`- 验证范围：${result.scope}`);
   lines.push(`- 结论：**${result.summary.status}** — ${result.summary.headline}`);
   lines.push('');
   lines.push('## 检查项');
@@ -84,7 +92,7 @@ export function renderMarkdown(result) {
   if (m.load) {
     lines.push(
       `- 场景负载：${m.load.clients} 客户端 · ACK p95 ${fmtMs(m.load.ack?.p95)} · ` +
-        `实测扇出 ${m.load.fanoutPerSecond} 条/s（模型预测 ${formatCores(m.load.predictedCores)} 核）`,
+        `推算投递量 ${m.load.fanoutPerSecond} 条/s`,
     );
   }
   lines.push('');
